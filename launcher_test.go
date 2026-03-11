@@ -357,10 +357,10 @@ func TestIPCFiles(t *testing.T) {
 
 func TestChecksumParsing(t *testing.T) {
 	tests := []struct {
-		input     string
-		wantAlgo  string
-		wantHash  string
-		wantOK    bool
+		input    string
+		wantAlgo string
+		wantHash string
+		wantOK   bool
 	}{
 		{"sha256:abc123", "sha256", "abc123", true},
 		{"", "", "", false},

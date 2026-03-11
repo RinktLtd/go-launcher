@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	heartbeatFile       = "heartbeat"
-	shutdownFile        = "shutdown_requested"
-	pendingUpdateFile   = "pending_update.json"
+	heartbeatFile     = "heartbeat"
+	shutdownFile      = "shutdown_requested"
+	pendingUpdateFile = "pending_update.json"
 )
 
 // heartbeatTouchedAfter returns true if the heartbeat file's mtime is after t.

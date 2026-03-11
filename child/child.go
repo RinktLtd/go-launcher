@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	defaultEnvVar       = "LAUNCHER_STATE_DIR"
-	heartbeatFile       = "heartbeat"
-	shutdownFile        = "shutdown_requested"
-	pendingUpdateFile   = "pending_update.json"
+	defaultEnvVar     = "LAUNCHER_STATE_DIR"
+	heartbeatFile     = "heartbeat"
+	shutdownFile      = "shutdown_requested"
+	pendingUpdateFile = "pending_update.json"
 )
 
 var envVarOverride string

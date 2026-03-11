@@ -153,43 +153,13 @@ func (l *Launcher) supervisorLoop(ctx context.Context) int {
 
 	for {
 		// Check crash threshold
-		if l.state.CrashCount >= l.cfg.CrashThreshold {
-			if hasPreviousVersion(l.cfg.DataDir) && l.state.RolledBackFrom != l.state.PreviousVersion {
-				slog.Warn("crash threshold reached, rolling back",
-					"crash_count", l.state.CrashCount,
-					"from", l.state.CurrentVersion,
-					"to", l.state.PreviousVersion)
-
-				if l.cfg.UI != nil {
-					l.cfg.UI.ShowSplash("Recovering...")
-				}
-
-				if err := rollback(l.cfg.DataDir); err != nil {
-					slog.Error("rollback failed", "error", err)
-					return 1
-				}
-
-				// Swap state
-				l.state.RolledBackFrom = l.state.CurrentVersion
-				l.state.CurrentVersion, l.state.PreviousVersion = l.state.PreviousVersion, l.state.CurrentVersion
-				l.state.CrashCount = 0
-				l.state.CrashWindowStart = time.Time{}
-				l.state.ProbationUntil = time.Time{}
-				// Keep RolledBackFrom set (anti-oscillation guard)
-				crashIndex = 0
-
-				if err := saveState(l.cfg.DataDir, l.state); err != nil {
-					slog.Error("failed to save state after rollback", "error", err)
-				}
-				continue
-			}
-
-			slog.Error("crash loop with no viable rollback target",
-				"crash_count", l.state.CrashCount)
-			if l.cfg.UI != nil {
-				l.cfg.UI.ShowError(l.cfg.AppName + " is unable to start. Please reinstall or contact support.")
-			}
-			return 1
+		action, code := l.handleCrashThreshold()
+		switch action {
+		case actionRolledBack:
+			crashIndex = 0
+			continue
+		case actionFatal:
+			return code
 		}
 
 		// Delete old heartbeat before spawning
@@ -212,53 +182,14 @@ func (l *Launcher) supervisorLoop(ctx context.Context) int {
 
 		// Wait for child to exit, monitoring heartbeat
 		exitCode := l.waitForChild(ctx, child)
-
-		// Probation check: if child ran long enough and heartbeat was touched, mark stable
-		if !l.state.ProbationUntil.IsZero() &&
-			heartbeatTouchedAfter(l.cfg.DataDir, child.spawnTime) &&
-			child.WallRuntime() > l.cfg.ProbationDuration {
-
-			slog.Info("version survived probation, marking stable",
-				"version", l.state.CurrentVersion,
-				"runtime", child.WallRuntime())
-
-			l.state.resetCrashState()
-			if err := saveState(l.cfg.DataDir, l.state); err != nil {
-				slog.Error("failed to save state after probation clear", "error", err)
-			}
-		}
+		l.checkProbation(child)
 
 		// Handle exit
 		if shutdownRequested(l.cfg.DataDir) {
-			// Check for pending update
-			if pending := readPendingUpdate(l.cfg.DataDir); pending != nil {
-				slog.Info("child requested update", "version", pending.Version)
-
-				if l.cfg.UI != nil {
-					l.cfg.UI.ShowSplash("Updating to " + pending.Version + "...")
-				}
-
-				if err := performUpdate(ctx, &l.cfg, pending); err != nil {
-					slog.Error("update failed, restarting current version", "error", err)
-					cleanStagingDir(l.cfg.DataDir)
-				} else {
-					// Update succeeded
-					l.state.PreviousVersion = l.state.CurrentVersion
-					l.state.CurrentVersion = pending.Version
-					l.state.resetCrashState()
-					l.state.ProbationUntil = time.Now().Add(l.cfg.ProbationDuration)
-					if err := saveState(l.cfg.DataDir, l.state); err != nil {
-						slog.Error("failed to save state after update", "error", err)
-					}
-				}
-
-				deletePendingUpdate(l.cfg.DataDir)
-				deleteShutdownFile(l.cfg.DataDir)
+			if shouldContinue := l.handleUpdate(ctx); shouldContinue {
 				crashIndex = 0
 				continue
 			}
-
-			// Clean shutdown — no update
 			slog.Info("child requested clean shutdown")
 			deleteShutdownFile(l.cfg.DataDir)
 			return 0
@@ -267,13 +198,111 @@ func (l *Launcher) supervisorLoop(ctx context.Context) int {
 		// No shutdown_requested — treat as crash regardless of exit code
 		slog.Warn("child exited unexpectedly", "exit_code", exitCode,
 			"runtime", child.WallRuntime())
-
-		// Clean up stale pending update on crash
 		deletePendingUpdate(l.cfg.DataDir)
-
 		l.recordCrash()
 		crashIndex = l.sleepBackoff(ctx, crashIndex)
 	}
+}
+
+type crashAction int
+
+const (
+	actionContinue   crashAction = iota // below threshold, proceed
+	actionRolledBack                    // rollback performed, restart loop
+	actionFatal                         // unrecoverable, exit
+)
+
+func (l *Launcher) handleCrashThreshold() (crashAction, int) {
+	if l.state.CrashCount < l.cfg.CrashThreshold {
+		return actionContinue, 0
+	}
+
+	if hasPreviousVersion(l.cfg.DataDir) && l.state.RolledBackFrom != l.state.PreviousVersion {
+		slog.Warn("crash threshold reached, rolling back",
+			"crash_count", l.state.CrashCount,
+			"from", l.state.CurrentVersion,
+			"to", l.state.PreviousVersion)
+
+		if l.cfg.UI != nil {
+			l.cfg.UI.ShowSplash("Recovering...")
+		}
+
+		if err := rollback(l.cfg.DataDir); err != nil {
+			slog.Error("rollback failed", "error", err)
+			return actionFatal, 1
+		}
+
+		l.state.RolledBackFrom = l.state.CurrentVersion
+		l.state.CurrentVersion, l.state.PreviousVersion = l.state.PreviousVersion, l.state.CurrentVersion
+		l.state.CrashCount = 0
+		l.state.CrashWindowStart = time.Time{}
+		l.state.ProbationUntil = time.Time{}
+
+		if err := saveState(l.cfg.DataDir, l.state); err != nil {
+			slog.Error("failed to save state after rollback", "error", err)
+		}
+		return actionRolledBack, 0
+	}
+
+	slog.Error("crash loop with no viable rollback target",
+		"crash_count", l.state.CrashCount)
+	if l.cfg.UI != nil {
+		l.cfg.UI.ShowError(l.cfg.AppName + " is unable to start. Please reinstall or contact support.")
+	}
+	return actionFatal, 1
+}
+
+func (l *Launcher) checkProbation(child *childProcess) {
+	if l.state.ProbationUntil.IsZero() {
+		return
+	}
+	if !heartbeatTouchedAfter(l.cfg.DataDir, child.spawnTime) {
+		return
+	}
+	if child.WallRuntime() <= l.cfg.ProbationDuration {
+		return
+	}
+
+	slog.Info("version survived probation, marking stable",
+		"version", l.state.CurrentVersion,
+		"runtime", child.WallRuntime())
+
+	l.state.resetCrashState()
+	if err := saveState(l.cfg.DataDir, l.state); err != nil {
+		slog.Error("failed to save state after probation clear", "error", err)
+	}
+}
+
+// handleUpdate checks for a pending update after shutdown was requested.
+// Returns true if the supervisor loop should continue (update applied or failed).
+func (l *Launcher) handleUpdate(ctx context.Context) bool {
+	pending := readPendingUpdate(l.cfg.DataDir)
+	if pending == nil {
+		return false
+	}
+
+	slog.Info("child requested update", "version", pending.Version)
+
+	if l.cfg.UI != nil {
+		l.cfg.UI.ShowSplash("Updating to " + pending.Version + "...")
+	}
+
+	if err := performUpdate(ctx, &l.cfg, pending); err != nil {
+		slog.Error("update failed, restarting current version", "error", err)
+		cleanStagingDir(l.cfg.DataDir)
+	} else {
+		l.state.PreviousVersion = l.state.CurrentVersion
+		l.state.CurrentVersion = pending.Version
+		l.state.resetCrashState()
+		l.state.ProbationUntil = time.Now().Add(l.cfg.ProbationDuration)
+		if err := saveState(l.cfg.DataDir, l.state); err != nil {
+			slog.Error("failed to save state after update", "error", err)
+		}
+	}
+
+	deletePendingUpdate(l.cfg.DataDir)
+	deleteShutdownFile(l.cfg.DataDir)
+	return true
 }
 
 // waitForChild waits for the child to exit, monitoring the heartbeat file
