@@ -54,6 +54,10 @@ The launcher handles:
 
 ## Quick Start
 
+> For a runnable end-to-end demo, see the [`_example/`](./_example/) directory.
+
+### Launcher side (your thin launcher binary)
+
 ### Launcher side (your thin launcher binary)
 
 ```go
