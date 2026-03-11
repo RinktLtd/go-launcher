@@ -1,14 +1,16 @@
 # go-launcher
 
-Process supervisor for Go applications with versioned deployments, automatic rollback, and zero-downtime updates.
+Crash-safe auto-updates for Go applications -- versioned deployments with automatic rollback when the new version fails.
 
 ## The Problem
 
-Desktop and server applications need reliable update mechanisms. The common approaches in Go all have the same flaw: **self-surgery** — the running binary replaces itself on disk, then restarts. If the new version crashes at startup, recovery logic never executes. If the replacement is interrupted (power loss, OOM kill), the installation is left in a broken state with no rollback path.
+Desktop and server applications need reliable update mechanisms. The common approaches in Go all have the same flaw: **self-surgery** -- the running binary replaces itself on disk, then restarts. If the new version crashes at startup, recovery logic never executes. If the replacement is interrupted (power loss, OOM kill), the installation is left in a broken state with no rollback path.
 
 This is how Discord, Slack, and VS Code solved it years ago with [Squirrel.Windows](https://github.com/Squirrel/Squirrel.Windows): a thin launcher manages versioned directories side-by-side, and the switch to a new version is just launching from a different directory next time. The old version stays intact until the new one proves stable.
 
-No Go library implements this pattern. **go-launcher** does.
+We could not find a Go library that implements this pattern. **go-launcher** does.
+
+go-launcher is designed for Go applications that run persistently -- desktop apps, system services, or long-running agents. It is not a replacement for package managers or container orchestration; it targets the deployment gap where your binary runs directly on user machines and must update itself reliably.
 
 ## What It Does
 
@@ -21,16 +23,16 @@ your-launcher          (thin binary, ~40 lines of your code + go-launcher)
 
 The launcher handles:
 
-- **Process supervision** — spawn, monitor, restart with configurable backoff
-- **Versioned directories** — `versions/current/` and `versions/previous/` side-by-side
-- **Crash detection + automatic rollback** — if the new version crash-loops, swap back to the previous version
-- **Update orchestration** — download to staging, verify checksum, atomic rotation
-- **Probation period** — new versions must survive a configurable window before being marked stable
-- **Anti-oscillation** — prevents infinite swapping between two broken versions
-- **Self-relocation** — launcher copies itself from Downloads to a permanent location on first run
-- **Singleton enforcement** — PID lockfile prevents duplicate instances
-- **File-based IPC** — no sockets, no pipes; communication via env vars and files
-- **Bootstrap download** — if no child binary exists, download the latest version on first launch
+- **Process supervision** -- spawn, monitor, restart with configurable backoff
+- **Versioned directories** -- `versions/current/` and `versions/previous/` side-by-side
+- **Crash detection + automatic rollback** -- if the new version crash-loops, swap back to the previous version
+- **Update orchestration** -- download to staging, verify checksum, atomic rotation
+- **Probation period** -- new versions must survive a configurable window before being marked stable
+- **Anti-oscillation** -- prevents infinite swapping between two broken versions
+- **Self-relocation** -- launcher copies itself from Downloads to a permanent location on first run
+- **Singleton enforcement** -- PID lockfile prevents duplicate instances
+- **File-based IPC** -- no sockets, no pipes; communication via env vars and files
+- **Bootstrap download** -- if no child binary exists, download the latest version on first launch
 
 ## How Existing Libraries Compare
 
@@ -40,13 +42,15 @@ The launcher handles:
 | [minio/selfupdate](https://github.com/minio/selfupdate) | Self-surgery | No | No | No | Yes |
 | [sanbornm/go-selfupdate](https://github.com/sanbornm/go-selfupdate) | Self-surgery | No | No | No | Yes |
 | [rhysd/go-github-selfupdate](https://github.com/rhysd/go-github-selfupdate) | Self-surgery | Apply-time only | No | No | Yes |
-| [jpillora/overseer](https://github.com/jpillora/overseer) | Master/child | No | Yes | No | **No** |
+| [jpillora/overseer](https://github.com/jpillora/overseer) | Master/child | No | Yes | No | No |
 | [fynelabs/selfupdate](https://github.com/fynelabs/selfupdate) | Self-surgery | Apply-time only | No | No | Yes |
 | **go-launcher** | **External supervisor** | **Crash-based** | **Yes** | **Yes** | **Yes** |
 
 **Apply-time rollback** means the `.old` file is restored if the rename/copy fails during the swap. It does not help if the new version starts successfully but crashes 30 seconds later.
 
-**Crash-based rollback** means the launcher detects that the new version is crash-looping and automatically reverts to the previous known-good version — even if the new version ran briefly before crashing.
+**Crash-based rollback** means the launcher detects that the new version is crash-looping and automatically reverts to the previous known-good version -- even if the new version ran briefly before crashing.
+
+> This table compares deployment architecture. Some of these libraries have strengths in other dimensions -- multi-backend support (GitHub/GitLab/S3), code signing verification, GOOS/GOARCH detection -- see each library's documentation for full feature sets.
 
 ## Quick Start
 
@@ -83,8 +87,15 @@ func main() {
 package main
 
 import (
+    "os"
+
     "github.com/rinktltd/go-launcher/child"
 )
+
+func init() {
+    // Must match the launcher's EnvVarName
+    child.SetEnvVar("MYAPP_LAUNCHER_STATE_DIR")
+}
 
 func main() {
     // ... application init ...
@@ -98,8 +109,7 @@ func main() {
 
     // When an update is available:
     if child.IsManaged() {
-        child.RequestUpdate("1.2.0", downloadURL, "sha256:abc123...")
-        // This writes pending_update.json + shutdown_requested, then you exit 0
+        child.RequestUpdate("1.2.0", "https://example.com/my-app-1.2.0", "sha256:abc123...")
         os.Exit(0)
     }
 }
@@ -134,7 +144,7 @@ No sockets, no named pipes. The launcher sets an environment variable (e.g. `MYA
 | Child -> Launcher | "Update available" | Write `pending_update.json` + `shutdown_requested`, exit 0 |
 | Child -> Launcher | "Shut down cleanly" | Write `shutdown_requested`, exit 0 |
 
-The launcher always restarts the child unless `shutdown_requested` exists with exit code 0. An unexpected exit 0 (without the file) is treated as a crash — this avoids ambiguity from stray `os.Exit(0)` calls.
+The launcher always restarts the child unless `shutdown_requested` exists with exit code 0. An unexpected exit 0 (without the file) is treated as a crash -- this avoids ambiguity from stray `os.Exit(0)` calls.
 
 ### Supervisor Loop
 
@@ -152,10 +162,10 @@ loop:
 
   spawn child
   wait for exit:
-    heartbeat touched     → mark healthy
-    shutdown_requested    → if update pending: download, rotate, continue
+    heartbeat touched     -> mark healthy
+    shutdown_requested    -> if update pending: download, rotate, continue
                             else: exit 0
-    no shutdown_requested → record crash, backoff, continue
+    no shutdown_requested -> record crash, backoff, continue
 
   on exit: check if probation should be cleared
 ```
@@ -164,14 +174,14 @@ loop:
 
 ```
 child detects new version (your app's logic)
-  → child calls child.RequestUpdate(version, url, checksum)
-  → child exits 0
-  → launcher downloads to staging/
-  → launcher verifies checksum
-  → launcher rotates: current/ → previous/, staging/ → current/
-  → launcher sets probation period
-  → launcher spawns new version
-  → if new version crash-loops → automatic rollback to previous/
+  -> child calls child.RequestUpdate(version, url, checksum)
+  -> child exits 0
+  -> launcher downloads to staging/
+  -> launcher verifies checksum
+  -> launcher rotates: current/ -> previous/, staging/ -> current/
+  -> launcher sets probation period
+  -> launcher spawns new version
+  -> if new version crash-loops -> automatic rollback to previous/
 ```
 
 ### Rollback
@@ -179,9 +189,9 @@ child detects new version (your app's logic)
 Three atomic renames with crash recovery:
 
 ```
-current/      → rollback-tmp/
-previous/     → current/
-rollback-tmp/ → previous/
+current/      -> rollback-tmp/
+previous/     -> current/
+rollback-tmp/ -> previous/
 ```
 
 If interrupted at any point, the launcher recovers to a consistent state on next startup by inspecting which directories exist.
@@ -242,8 +252,9 @@ launcher.Config{
     ChildArgs         []string        // args forwarded to child (default: none)
     Backoff           []time.Duration // restart delays (default: [2s, 5s, 15s])
     CrashThreshold    int             // crashes before rollback (default: 3)
+    CrashWindow       time.Duration   // crash count resets after this (default: 5min)
     ProbationDuration time.Duration   // new version probation (default: 10min)
-    KillTimeout       time.Duration   // SIGTERM → SIGKILL escalation (default: 30s)
+    KillTimeout       time.Duration   // SIGTERM -> SIGKILL escalation (default: 30s)
 
     // Pluggable (all optional except Fetcher if you want updates)
     UI        UI          // nil = headless
@@ -256,9 +267,13 @@ launcher.Config{
 
 | Platform | DataDir | InstallDir |
 |---|---|---|
-| macOS | `~/Library/Application Support/{appName}/` | `/Applications/{appName}.app/` |
+| macOS | `~/Library/Application Support/{appName}/` | `/Applications/` |
 | Windows | `%LOCALAPPDATA%\{appName}\` | `%LOCALAPPDATA%\{appName}\` |
 | Linux | `~/.local/share/{appName}/` | `~/.local/bin/` |
+
+### Logging
+
+go-launcher logs via `log/slog`. Configure `slog.SetDefault()` before calling `Run()` to control output level and format.
 
 ## Design Decisions
 
@@ -272,6 +287,23 @@ launcher.Config{
 
 **Atomic state writes.** All persistent state uses write-to-tmp + rename. No truncated reads from interrupted writes.
 
+## Security
+
+go-launcher downloads binaries from the internet and executes them. The built-in fetchers enforce HTTPS. Downloaded artifacts are verified against SHA-256 checksums provided in the `Release.Checksum` field.
+
+Code signing verification is not currently built in. If your threat model requires it, implement a custom `Fetcher` that verifies signatures before writing to the `dst` writer.
+
+## Limitations
+
+- The child must be a single binary (or a directory of files, but the launcher manages the directory as an opaque unit).
+- The launcher does not update itself. Updating the launcher binary requires a separate mechanism (e.g. a new download from your website).
+- No delta/incremental updates -- each version is a full download.
+- No download resumption -- interrupted downloads restart from the beginning.
+
 ## License
 
 MIT
+
+---
+
+go-launcher is maintained by [Rinkt](https://rinkt.com), where we use it to ship reliable updates for our RPA platform.
