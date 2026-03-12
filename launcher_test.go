@@ -2,26 +2,18 @@ package launcher
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
 
-// testChild builds a small test binary that behaves as instructed via env vars.
-func testChild(t *testing.T, dir string) string {
-	t.Helper()
-	name := "test-child"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-
-	src := filepath.Join(dir, "main.go")
-	bin := filepath.Join(dir, name)
-
-	os.WriteFile(src, []byte(`package main
+// env-var-driven child source used by the legacy integration tests.
+const envVarChildSource = `package main
 
 import (
 	"os"
@@ -31,84 +23,60 @@ import (
 func main() {
 	stateDir := os.Getenv("TEST_LAUNCHER_STATE_DIR")
 
-	// Touch heartbeat if instructed
 	if os.Getenv("CHILD_HEARTBEAT") == "1" && stateDir != "" {
 		f, _ := os.Create(stateDir + "/heartbeat")
 		f.Close()
 	}
 
-	// Write shutdown_requested if instructed
 	if os.Getenv("CHILD_SHUTDOWN") == "1" && stateDir != "" {
 		os.WriteFile(stateDir + "/shutdown_requested", []byte(""), 0600)
 	}
 
-	// Sleep if instructed
 	if d := os.Getenv("CHILD_SLEEP"); d != "" {
 		dur, _ := time.ParseDuration(d)
 		time.Sleep(dur)
 	}
 
-	// Exit with code
 	if os.Getenv("CHILD_EXIT_CODE") == "1" {
 		os.Exit(1)
 	}
 }
-`), 0644)
+`
 
-	cmd := exec.Command("go", "build", "-o", bin, src)
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build test child: %v\n%s", err, out)
+// baseTestConfig returns a Config with fast defaults suitable for tests.
+func baseTestConfig(binName, dataDir string) Config {
+	return Config{
+		AppName:         "test-app",
+		ChildBinaryName: binName,
+		DataDir:         dataDir,
+		EnvVarName:      "TEST_LAUNCHER_STATE_DIR",
+		Backoff:         []time.Duration{10 * time.Millisecond, 20 * time.Millisecond},
+		CrashThreshold:  3,
+		CrashWindow:     10 * time.Second,
+		KillTimeout:     2 * time.Second,
 	}
-
-	return name
 }
 
-func setupTestLauncher(t *testing.T) (cfg Config, dataDir string, cleanup func()) {
+func setupTestLauncher(t *testing.T) (cfg Config, dataDir string) {
 	t.Helper()
 	dataDir = t.TempDir()
-	childDir := t.TempDir()
+	binDir, binName := buildChildFromSource(t, envVarChildSource)
+	installChild(t, binDir, binName, dataDir, "current")
 
-	childName := testChild(t, childDir)
+	cfg = baseTestConfig(binName, dataDir)
+	cfg.Backoff = []time.Duration{100 * time.Millisecond, 200 * time.Millisecond}
+	cfg.ProbationDuration = 500 * time.Millisecond
 
-	// Place child binary in versions/current/
-	curDir := filepath.Join(dataDir, "versions", "current")
-	os.MkdirAll(curDir, 0700)
-
-	src := filepath.Join(childDir, childName)
-	dst := filepath.Join(curDir, childName)
-	data, _ := os.ReadFile(src)
-	os.WriteFile(dst, data, 0755)
-
-	cfg = Config{
-		AppName:           "test-app",
-		ChildBinaryName:   childName,
-		DataDir:           dataDir,
-		InstallDir:        "", // skip relocation in tests
-		EnvVarName:        "TEST_LAUNCHER_STATE_DIR",
-		Backoff:           []time.Duration{100 * time.Millisecond, 200 * time.Millisecond},
-		CrashThreshold:    3,
-		ProbationDuration: 500 * time.Millisecond,
-		KillTimeout:       2 * time.Second,
-	}
-
-	return cfg, dataDir, func() {}
+	return cfg, dataDir
 }
 
 func TestCleanShutdown(t *testing.T) {
-	cfg, _, cleanup := setupTestLauncher(t)
-	defer cleanup()
+	cfg, _ := setupTestLauncher(t)
 
 	// Child will touch heartbeat and write shutdown_requested
-	cfg.ChildArgs = nil
-	os.Setenv("CHILD_HEARTBEAT", "1")
-	os.Setenv("CHILD_SHUTDOWN", "1")
-	os.Setenv("CHILD_EXIT_CODE", "0")
-	defer func() {
-		os.Unsetenv("CHILD_HEARTBEAT")
-		os.Unsetenv("CHILD_SHUTDOWN")
-		os.Unsetenv("CHILD_EXIT_CODE")
-	}()
+	t.Setenv("CHILD_HEARTBEAT", "1")
+	t.Setenv("CHILD_SHUTDOWN", "1")
+	t.Setenv("CHILD_EXIT_CODE", "0")
 
 	l := New(cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -121,11 +89,9 @@ func TestCleanShutdown(t *testing.T) {
 }
 
 func TestCrashLoopExits(t *testing.T) {
-	cfg, _, cleanup := setupTestLauncher(t)
-	defer cleanup()
+	cfg, _ := setupTestLauncher(t)
 
-	os.Setenv("CHILD_EXIT_CODE", "1")
-	defer os.Unsetenv("CHILD_EXIT_CODE")
+	t.Setenv("CHILD_EXIT_CODE", "1")
 
 	l := New(cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -144,12 +110,10 @@ func TestCrashLoopExits(t *testing.T) {
 }
 
 func TestRestartOnUnexpectedExit0(t *testing.T) {
-	cfg, dataDir, cleanup := setupTestLauncher(t)
-	defer cleanup()
+	cfg, dataDir := setupTestLauncher(t)
 
 	// Child exits 0 without shutdown_requested — should be treated as crash
-	os.Setenv("CHILD_EXIT_CODE", "0")
-	defer os.Unsetenv("CHILD_EXIT_CODE")
+	t.Setenv("CHILD_EXIT_CODE", "0")
 
 	l := New(cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -374,5 +338,436 @@ func TestChecksumParsing(t *testing.T) {
 			t.Errorf("parseChecksum(%q) = (%q, %q, %v), want (%q, %q, %v)",
 				tt.input, algo, hash, ok, tt.wantAlgo, tt.wantHash, tt.wantOK)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for counter-based integration tests (no env var pollution)
+// ---------------------------------------------------------------------------
+
+// buildChildFromSource compiles a Go source string into a test binary.
+// Returns the directory containing the binary and the binary filename.
+func buildChildFromSource(t *testing.T, source string) (binDir, binName string) {
+	t.Helper()
+	binDir = t.TempDir()
+	binName = "test-child"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+
+	src := filepath.Join(binDir, "main.go")
+	bin := filepath.Join(binDir, binName)
+
+	if err := os.WriteFile(src, []byte(source), 0644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	cmd := exec.Command("go", "build", "-o", bin, src)
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build test child: %v\n%s", err, out)
+	}
+
+	return binDir, binName
+}
+
+// installChild copies a child binary into a version directory (current, previous, etc).
+func installChild(t *testing.T, binDir, binName, dataDir, versionDir string) {
+	t.Helper()
+	destDir := filepath.Join(dataDir, "versions", versionDir)
+	if err := os.MkdirAll(destDir, 0700); err != nil {
+		t.Fatalf("mkdir %s: %v", versionDir, err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(binDir, binName))
+	if err != nil {
+		t.Fatalf("read child binary: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(destDir, binName), data, 0755); err != nil {
+		t.Fatalf("write child to %s: %v", versionDir, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fakes
+// ---------------------------------------------------------------------------
+
+// fakeFetcher serves a pre-built binary for update/bootstrap tests.
+type fakeFetcher struct {
+	binaryPath string
+	release    Release
+}
+
+func (f *fakeFetcher) LatestVersion(_ context.Context) (*Release, error) {
+	return &f.release, nil
+}
+
+func (f *fakeFetcher) Download(_ context.Context, _ *Release, dst io.Writer, progress func(float64)) error {
+	data, err := os.ReadFile(f.binaryPath)
+	if err != nil {
+		return err
+	}
+	if progress != nil {
+		progress(0.5)
+	}
+	_, err = dst.Write(data)
+	if progress != nil {
+		progress(1.0)
+	}
+	return err
+}
+
+// fakeUI records all UI method calls for assertion.
+type fakeUI struct {
+	mu              sync.Mutex
+	splashMessages  []string
+	hideSplashCount int
+	errorMessages   []string
+}
+
+func (u *fakeUI) ShowSplash(status string) {
+	u.mu.Lock()
+	u.splashMessages = append(u.splashMessages, status)
+	u.mu.Unlock()
+}
+
+func (u *fakeUI) UpdateProgress(float64, string) {}
+
+func (u *fakeUI) HideSplash() {
+	u.mu.Lock()
+	u.hideSplashCount++
+	u.mu.Unlock()
+}
+
+func (u *fakeUI) ShowError(msg string) {
+	u.mu.Lock()
+	u.errorMessages = append(u.errorMessages, msg)
+	u.mu.Unlock()
+}
+
+// ---------------------------------------------------------------------------
+// Integration tests: real supervisor loop with real child processes
+// ---------------------------------------------------------------------------
+
+func TestRollbackOnCrashLoop(t *testing.T) {
+	// Child crashes on first 3 invocations, then succeeds after rollback.
+	// Uses a counter file in the state dir to track invocations.
+	binDir, binName := buildChildFromSource(t, `package main
+
+import (
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+func main() {
+	stateDir := os.Getenv("TEST_LAUNCHER_STATE_DIR")
+	if stateDir == "" { os.Exit(1) }
+
+	countFile := filepath.Join(stateDir, ".call_count")
+	data, _ := os.ReadFile(countFile)
+	count, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	count++
+	os.WriteFile(countFile, []byte(strconv.Itoa(count)), 0600)
+
+	if count <= 3 {
+		os.Exit(1)
+	}
+
+	f, _ := os.Create(filepath.Join(stateDir, "heartbeat"))
+	f.Close()
+	os.WriteFile(filepath.Join(stateDir, "shutdown_requested"), []byte(""), 0600)
+}
+`)
+
+	dataDir := t.TempDir()
+	installChild(t, binDir, binName, dataDir, "current")
+	installChild(t, binDir, binName, dataDir, "previous")
+
+	// Pre-populate state so the anti-oscillation guard allows rollback
+	saveState(dataDir, &State{
+		CurrentVersion:  "1.0.0",
+		PreviousVersion: "0.9.0",
+	})
+
+	l := New(baseTestConfig(binName, dataDir))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	code := l.Run(ctx)
+	if code != 0 {
+		t.Fatalf("expected exit 0 after rollback recovery, got %d", code)
+	}
+
+	state, _ := loadState(dataDir)
+	if state.RolledBackFrom == "" {
+		t.Error("expected RolledBackFrom to be set after rollback")
+	}
+	if state.CurrentVersion != "0.9.0" {
+		t.Errorf("expected current version 0.9.0 (rolled back), got %q", state.CurrentVersion)
+	}
+	if state.PreviousVersion != "1.0.0" {
+		t.Errorf("expected previous version 1.0.0 (swapped), got %q", state.PreviousVersion)
+	}
+}
+
+func TestUpdateFlow(t *testing.T) {
+	// First invocation: child requests update (writes pending_update.json + shutdown).
+	// After the launcher performs the update, second invocation: clean shutdown.
+	binDir, binName := buildChildFromSource(t, `package main
+
+import (
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+func main() {
+	stateDir := os.Getenv("TEST_LAUNCHER_STATE_DIR")
+	if stateDir == "" { os.Exit(1) }
+
+	countFile := filepath.Join(stateDir, ".call_count")
+	data, _ := os.ReadFile(countFile)
+	count, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	count++
+	os.WriteFile(countFile, []byte(strconv.Itoa(count)), 0600)
+
+	f, _ := os.Create(filepath.Join(stateDir, "heartbeat"))
+	f.Close()
+
+	if count == 1 {
+		os.WriteFile(filepath.Join(stateDir, "pending_update.json"),
+			[]byte("{\"version\":\"2.0.0\",\"url\":\"https://example.com/v2\",\"checksum\":\"\"}"), 0600)
+	}
+
+	os.WriteFile(filepath.Join(stateDir, "shutdown_requested"), []byte(""), 0600)
+}
+`)
+
+	dataDir := t.TempDir()
+	installChild(t, binDir, binName, dataDir, "current")
+
+	saveState(dataDir, &State{CurrentVersion: "1.0.0"})
+
+	fetcher := &fakeFetcher{
+		binaryPath: filepath.Join(binDir, binName),
+		release:    Release{Version: "2.0.0", URL: "https://example.com/v2"},
+	}
+
+	cfg := baseTestConfig(binName, dataDir)
+	cfg.Fetcher = fetcher
+	l := New(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	code := l.Run(ctx)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+
+	state, _ := loadState(dataDir)
+	if state.CurrentVersion != "2.0.0" {
+		t.Errorf("expected current version 2.0.0, got %q", state.CurrentVersion)
+	}
+	if state.PreviousVersion != "1.0.0" {
+		t.Errorf("expected previous version 1.0.0, got %q", state.PreviousVersion)
+	}
+	if state.ProbationUntil.IsZero() {
+		t.Error("expected probation to be set after update")
+	}
+
+	// Verify version directories were rotated
+	if !hasCurrentVersion(dataDir) {
+		t.Error("expected current/ to exist after update")
+	}
+	if !hasPreviousVersion(dataDir) {
+		t.Error("expected previous/ to exist after update")
+	}
+}
+
+func TestBootstrapDownload(t *testing.T) {
+	// Start with empty versions/ — the launcher should bootstrap via Fetcher,
+	// then spawn the downloaded child.
+	binDir, binName := buildChildFromSource(t, `package main
+
+import "os"
+
+func main() {
+	stateDir := os.Getenv("TEST_LAUNCHER_STATE_DIR")
+	if stateDir == "" { os.Exit(1) }
+
+	f, _ := os.Create(stateDir + "/heartbeat")
+	f.Close()
+	os.WriteFile(stateDir + "/shutdown_requested", []byte(""), 0600)
+}
+`)
+
+	dataDir := t.TempDir()
+	// Intentionally NOT installing any child — versions/current/ is empty
+
+	fetcher := &fakeFetcher{
+		binaryPath: filepath.Join(binDir, binName),
+		release:    Release{Version: "1.0.0", URL: "https://example.com/v1"},
+	}
+
+	cfg := baseTestConfig(binName, dataDir)
+	cfg.Fetcher = fetcher
+	l := New(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	code := l.Run(ctx)
+	if code != 0 {
+		t.Fatalf("expected exit 0 after bootstrap, got %d", code)
+	}
+
+	// Child binary should now exist in current/
+	if !hasCurrentVersion(dataDir) {
+		t.Error("expected current/ to have child after bootstrap")
+	}
+}
+
+func TestUICallbacks(t *testing.T) {
+	// Child touches heartbeat, waits for the launcher to detect it, then shuts down.
+	binDir, binName := buildChildFromSource(t, `package main
+
+import (
+	"os"
+	"time"
+)
+
+func main() {
+	stateDir := os.Getenv("TEST_LAUNCHER_STATE_DIR")
+	if stateDir == "" { os.Exit(1) }
+
+	f, _ := os.Create(stateDir + "/heartbeat")
+	f.Close()
+
+	// Wait for heartbeat ticker (500ms) to fire and call HideSplash
+	time.Sleep(1 * time.Second)
+
+	os.WriteFile(stateDir + "/shutdown_requested", []byte(""), 0600)
+}
+`)
+
+	dataDir := t.TempDir()
+	installChild(t, binDir, binName, dataDir, "current")
+
+	ui := &fakeUI{}
+
+	cfg := baseTestConfig(binName, dataDir)
+	cfg.UI = ui
+	l := New(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	code := l.Run(ctx)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+
+	ui.mu.Lock()
+	defer ui.mu.Unlock()
+
+	if len(ui.splashMessages) == 0 {
+		t.Error("expected ShowSplash to be called at least once")
+	}
+
+	foundStarting := false
+	for _, msg := range ui.splashMessages {
+		if msg == "Starting test-app..." {
+			foundStarting = true
+			break
+		}
+	}
+	if !foundStarting {
+		t.Errorf("expected ShowSplash with 'Starting test-app...', got %v", ui.splashMessages)
+	}
+
+	if ui.hideSplashCount == 0 {
+		t.Error("expected HideSplash to be called after heartbeat")
+	}
+
+	if len(ui.errorMessages) > 0 {
+		t.Errorf("expected no errors, got %v", ui.errorMessages)
+	}
+}
+
+func TestCrashLoopShowsError(t *testing.T) {
+	// When crash loop has no rollback target, UI.ShowError should be called.
+	binDir, binName := buildChildFromSource(t, `package main
+
+import "os"
+
+func main() { os.Exit(1) }
+`)
+
+	dataDir := t.TempDir()
+	installChild(t, binDir, binName, dataDir, "current")
+	// No previous/ — no rollback possible
+
+	ui := &fakeUI{}
+
+	cfg := baseTestConfig(binName, dataDir)
+	cfg.UI = ui
+	l := New(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	code := l.Run(ctx)
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+
+	ui.mu.Lock()
+	defer ui.mu.Unlock()
+
+	if len(ui.errorMessages) == 0 {
+		t.Error("expected ShowError to be called when crash loop has no rollback target")
+	}
+}
+
+func TestContextCancellationTerminatesChild(t *testing.T) {
+	// Child sleeps forever. Context cancellation should kill it.
+	binDir, binName := buildChildFromSource(t, `package main
+
+import (
+	"os"
+	"time"
+)
+
+func main() {
+	stateDir := os.Getenv("TEST_LAUNCHER_STATE_DIR")
+	if stateDir == "" { os.Exit(1) }
+
+	f, _ := os.Create(stateDir + "/heartbeat")
+	f.Close()
+
+	time.Sleep(1 * time.Hour)
+}
+`)
+
+	dataDir := t.TempDir()
+	installChild(t, binDir, binName, dataDir, "current")
+
+	l := New(baseTestConfig(binName, dataDir))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	l.Run(ctx)
+	elapsed := time.Since(start)
+
+	// Should finish within ~4 seconds (2s context + 2s kill timeout max)
+	if elapsed > 10*time.Second {
+		t.Errorf("expected fast termination, took %v", elapsed)
 	}
 }
