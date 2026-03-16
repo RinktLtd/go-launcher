@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>go-launcher &mdash; Crash-safe auto-updates for Go applications</title>
+<meta name="description" content="The Squirrel.Windows pattern for Go. External supervisor with versioned directories, crash-based rollback, and zero-dependency child integration.">
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --red: #f85149;
+    --code-bg: #1c2128;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .container { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+
+  /* Hero */
+  .hero {
+    padding: 80px 0 60px;
+    text-align: center;
+  }
+  .hero h1 {
+    font-size: 2.8rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+  }
+  .hero h1 span { color: var(--accent); }
+  .hero .tagline {
+    font-size: 1.2rem;
+    color: var(--muted);
+    max-width: 600px;
+    margin: 0 auto 32px;
+  }
+  .hero .badges { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .hero .badges img { height: 20px; }
+  .hero .cta {
+    margin-top: 32px;
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .btn {
+    display: inline-block;
+    padding: 10px 24px;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    transition: opacity 0.15s;
+  }
+  .btn:hover { text-decoration: none; opacity: 0.85; }
+  .btn-primary { background: var(--accent); color: var(--bg); }
+  .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+
+  /* Sections */
+  section { padding: 60px 0; }
+  section h2 {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin-bottom: 24px;
+    letter-spacing: -0.01em;
+  }
+  section p { color: var(--muted); margin-bottom: 16px; }
+  section p strong { color: var(--text); }
+
+  /* Problem/Solution */
+  .problem-solution {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  @media (max-width: 640px) { .problem-solution { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+  }
+  .card h3 { font-size: 1.1rem; margin-bottom: 12px; }
+  .card p { color: var(--muted); font-size: 0.95rem; margin-bottom: 0; }
+  .card.problem h3 { color: var(--red); }
+  .card.solution h3 { color: var(--accent2); }
+
+  /* Features */
+  .features {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  @media (max-width: 640px) { .features { grid-template-columns: 1fr; } }
+  .feature {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+  }
+  .feature h4 { font-size: 0.95rem; margin-bottom: 6px; }
+  .feature p { color: var(--muted); font-size: 0.85rem; margin-bottom: 0; }
+
+  /* Diagram */
+  .diagram {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 32px;
+    text-align: center;
+    margin: 24px 0;
+    overflow-x: auto;
+  }
+  .diagram pre {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--muted);
+    display: inline-block;
+    text-align: left;
+  }
+  .diagram pre .hl { color: var(--accent); }
+  .diagram pre .g { color: var(--accent2); }
+
+  /* Code */
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    margin-bottom: 16px;
+  }
+  code { font-family: var(--mono); font-size: 0.85em; }
+  .inline-code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.85em;
+  }
+  .kw { color: var(--red); }
+  .str { color: #a5d6ff; }
+  .cm { color: #8b949e; }
+  .fn { color: #d2a8ff; }
+  .typ { color: #ff7b72; }
+  .pkg { color: var(--accent2); }
+
+  /* Comparison table */
+  .table-wrap {
+    overflow-x: auto;
+    margin: 24px 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  th, td {
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    background: var(--surface);
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  td { color: var(--text); }
+  tr:last-child td { border-bottom: none; }
+  tr.highlight td {
+    color: var(--accent);
+    font-weight: 600;
+    background: rgba(88, 166, 255, 0.05);
+  }
+  .yes { color: var(--accent2); }
+  .no { color: var(--muted); }
+
+  /* Update flow */
+  .flow {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    margin: 24px 0;
+    overflow-x: auto;
+  }
+  .flow-step {
+    flex: 1;
+    min-width: 140px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 16px;
+    text-align: center;
+    position: relative;
+  }
+  .flow-step:first-child { border-radius: 8px 0 0 8px; }
+  .flow-step:last-child { border-radius: 0 8px 8px 0; }
+  .flow-step h4 { font-size: 0.8rem; color: var(--accent); margin-bottom: 4px; }
+  .flow-step p { font-size: 0.8rem; color: var(--muted); margin-bottom: 0; }
+  .flow-arrow {
+    display: flex;
+    align-items: center;
+    color: var(--border);
+    font-size: 1.2rem;
+    padding: 0 2px;
+  }
+
+  /* Footer */
+  footer {
+    padding: 40px 0;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  footer a { color: var(--accent); }
+
+  /* Install snippet */
+  .install {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    text-align: center;
+    margin: 24px 0;
+    color: var(--muted);
+  }
+  .install span { color: var(--accent2); }
+</style>
+</head>
+<body>
+
+<!-- Hero -->
+<header class="hero">
+  <div class="container">
+    <h1><span>go-launcher</span></h1>
+    <p class="tagline">
+      The Squirrel.Windows pattern for Go. External supervisor with versioned directories, crash-based rollback, and zero-dependency child integration.
+    </p>
+    <div class="badges">
+      <a href="https://pkg.go.dev/github.com/rinktltd/go-launcher"><img src="https://pkg.go.dev/badge/github.com/rinktltd/go-launcher.svg" alt="Go Reference"></a>
+      <a href="https://github.com/rinktltd/go-launcher/actions/workflows/ci.yml"><img src="https://github.com/rinktltd/go-launcher/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+      <a href="https://goreportcard.com/report/github.com/rinktltd/go-launcher"><img src="https://goreportcard.com/badge/github.com/rinktltd/go-launcher" alt="Go Report Card"></a>
+      <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License">
+    </div>
+    <div class="cta">
+      <a href="https://github.com/rinktltd/go-launcher" class="btn btn-primary">View on GitHub</a>
+      <a href="https://pkg.go.dev/github.com/rinktltd/go-launcher" class="btn btn-secondary">Go Docs</a>
+    </div>
+  </div>
+</header>
+
+<!-- Problem / Solution -->
+<section>
+  <div class="container">
+    <div class="problem-solution">
+      <div class="card problem">
+        <h3>The Problem</h3>
+        <p>
+          Every Go auto-update library uses <strong>self-surgery</strong> &mdash; the running binary replaces itself on disk, then restarts.
+          If the new version crashes at startup, recovery logic never executes.
+          If the replacement is interrupted, the binary is corrupted with no rollback path.
+        </p>
+      </div>
+      <div class="card solution">
+        <h3>The Solution</h3>
+        <p>
+          Discord, Slack, and VS Code solved this years ago: a thin launcher manages <strong>versioned directories side-by-side</strong>.
+          The old version stays intact until the new one proves stable.
+          go-launcher brings this pattern to Go.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section>
+  <div class="container">
+    <h2>How it works</h2>
+    <div class="diagram">
+<pre>
+<span class="hl">your-launcher</span>          <span class="cm">(thin binary, ~40 lines of your code + go-launcher)</span>
+  └── <span class="g">your-app</span>         <span class="cm">(your actual application, spawned as child process)</span>
+
+<span class="cm">$DATA_DIR/</span>
+  <span class="cm">versions/</span>
+    <span class="g">current/</span>          <span class="cm"># active version</span>
+    <span class="hl">previous/</span>         <span class="cm"># rollback target</span>
+    <span class="cm">staging/</span>          <span class="cm"># download in progress</span>
+</pre>
+    </div>
+
+    <div class="flow">
+      <div class="flow-step">
+        <h4>1. Child detects update</h4>
+        <p>Your app checks for new versions (your logic)</p>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">
+        <h4>2. Request update</h4>
+        <p>Child calls RequestUpdate() and exits</p>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">
+        <h4>3. Download + verify</h4>
+        <p>Launcher downloads to staging, verifies SHA-256</p>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">
+        <h4>4. Rotate + launch</h4>
+        <p>current/ &rarr; previous/, staging/ &rarr; current/</p>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">
+        <h4>5. Probation</h4>
+        <p>If new version crash-loops, automatic rollback</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section>
+  <div class="container">
+    <h2>Features</h2>
+    <div class="features">
+      <div class="feature">
+        <h4>Crash-based rollback</h4>
+        <p>If the new version crash-loops, the previous version comes back automatically. No manual intervention.</p>
+      </div>
+      <div class="feature">
+        <h4>Probation period</h4>
+        <p>New versions must survive a configurable window before being marked stable.</p>
+      </div>
+      <div class="feature">
+        <h4>Anti-oscillation</h4>
+        <p>Prevents infinite swapping between two broken versions. Exits cleanly if both fail.</p>
+      </div>
+      <div class="feature">
+        <h4>File-based IPC</h4>
+        <p>No sockets, no pipes. Communication via env vars and files. Debuggable, cross-platform, crash-safe.</p>
+      </div>
+      <div class="feature">
+        <h4>Zero-dep child</h4>
+        <p>The child package has zero transitive dependencies. Standard library only.</p>
+      </div>
+      <div class="feature">
+        <h4>Cross-platform</h4>
+        <p>macOS, Windows, Linux. Platform-appropriate default paths for data and install directories.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Quick Start -->
+<section>
+  <div class="container">
+    <h2>Quick start</h2>
+    <div class="install">
+      <span>$</span> go get github.com/rinktltd/go-launcher
+    </div>
+    <p><strong>Launcher</strong> (your thin supervisor binary):</p>
+<pre>
+<span class="kw">package</span> main
+
+<span class="kw">import</span> (
+    <span class="str">"context"</span>
+    <span class="str">"os"</span>
+
+    <span class="str">"github.com/rinktltd/go-launcher"</span>
+    <span class="str">"github.com/rinktltd/go-launcher/fetch"</span>
+)
+
+<span class="kw">func</span> <span class="fn">main</span>() {
+    l := launcher.<span class="fn">New</span>(launcher.Config{
+        AppName:         <span class="str">"My App"</span>,
+        ChildBinaryName: <span class="str">"my-app"</span>,
+        DataDir:         launcher.<span class="fn">DefaultDataDir</span>(<span class="str">"MyApp"</span>),
+        InstallDir:      launcher.<span class="fn">DefaultInstallDir</span>(<span class="str">"MyApp"</span>),
+        EnvVarName:      <span class="str">"MYAPP_LAUNCHER_STATE_DIR"</span>,
+        Fetcher:         fetch.<span class="fn">GitHubRelease</span>(<span class="str">"myorg"</span>, <span class="str">"myapp"</span>, fetch.<span class="fn">AssetPattern</span>(<span class="str">"my-app-*"</span>)),
+    })
+
+    os.<span class="fn">Exit</span>(l.<span class="fn">Run</span>(context.<span class="fn">Background</span>()))
+}
+</pre>
+    <p><strong>Child</strong> (your actual application):</p>
+<pre>
+<span class="kw">package</span> main
+
+<span class="kw">import</span> (
+    <span class="str">"os"</span>
+
+    <span class="str">"github.com/rinktltd/go-launcher/child"</span>
+)
+
+<span class="kw">func</span> <span class="fn">init</span>() {
+    child.<span class="fn">SetEnvVar</span>(<span class="str">"MYAPP_LAUNCHER_STATE_DIR"</span>)
+}
+
+<span class="kw">func</span> <span class="fn">main</span>() {
+    <span class="cm">// Signal healthy startup</span>
+    <span class="kw">if</span> child.<span class="fn">IsManaged</span>() {
+        child.<span class="fn">TouchHeartbeat</span>()
+    }
+
+    <span class="cm">// ... your application runs ...</span>
+
+    <span class="cm">// When you detect a new version:</span>
+    <span class="kw">if</span> child.<span class="fn">IsManaged</span>() {
+        child.<span class="fn">RequestUpdate</span>(<span class="str">"1.2.0"</span>, <span class="str">"https://example.com/v1.2.0"</span>, <span class="str">"sha256:abc..."</span>)
+        os.<span class="fn">Exit</span>(0) <span class="cm">// launcher handles the rest</span>
+    }
+}
+</pre>
+  </div>
+</section>
+
+<!-- Comparison -->
+<section>
+  <div class="container">
+    <h2>How existing libraries compare</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Library</th>
+            <th>Approach</th>
+            <th>Rollback</th>
+            <th>Supervisor</th>
+            <th>Versioned dirs</th>
+            <th>Windows</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/creativeprojects/go-selfupdate">go-selfupdate</a></td>
+            <td>Self-surgery</td>
+            <td class="no">Apply-time</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+            <td class="yes">Yes</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/minio/selfupdate">minio/selfupdate</a></td>
+            <td>Self-surgery</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+            <td class="yes">Yes</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/rhysd/go-github-selfupdate">go-github-selfupdate</a></td>
+            <td>Self-surgery</td>
+            <td class="no">Apply-time</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+            <td class="yes">Yes</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/jpillora/overseer">overseer</a></td>
+            <td>Master/child</td>
+            <td class="no">No</td>
+            <td class="yes">Yes</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/fynelabs/selfupdate">fynelabs/selfupdate</a></td>
+            <td>Self-surgery</td>
+            <td class="no">Apply-time</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+            <td class="yes">Yes</td>
+          </tr>
+          <tr class="highlight">
+            <td>go-launcher</td>
+            <td>External supervisor</td>
+            <td class="yes">Crash-based</td>
+            <td class="yes">Yes</td>
+            <td class="yes">Yes</td>
+            <td class="yes">Yes</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <strong>Apply-time rollback</strong> restores the old file if the rename fails during the swap.
+      It does not help if the new version starts successfully but crashes 30 seconds later.
+    </p>
+    <p>
+      <strong>Crash-based rollback</strong> detects that the new version is crash-looping and automatically
+      reverts to the previous known-good version &mdash; even if the new version ran briefly before crashing.
+    </p>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p>
+      MIT License &middot;
+      Maintained by <a href="https://rinkt.com">Rinkt</a> &middot;
+      <a href="https://github.com/rinktltd/go-launcher">GitHub</a> &middot;
+      <a href="https://pkg.go.dev/github.com/rinktltd/go-launcher">Docs</a>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>
