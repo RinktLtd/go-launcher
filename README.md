@@ -7,6 +7,8 @@
 
 The [Squirrel.Windows](https://github.com/Squirrel/Squirrel.Windows) pattern for Go. External supervisor with versioned directories, crash-based rollback, and zero-dependency child integration.
 
+**[Website](https://rinktltd.github.io/go-launcher/)** | **[Go Docs](https://pkg.go.dev/github.com/rinktltd/go-launcher)**
+
 ## The Problem
 
 Every Go auto-update library uses the same approach: **self-surgery** -- the running binary replaces itself on disk, then restarts. If the new version crashes at startup, recovery logic never executes. If the replacement is interrupted (power loss, OOM kill), the binary is corrupted with no rollback path.
