@@ -649,7 +649,7 @@ func main() {
 	f.Close()
 
 	// Wait for heartbeat ticker (500ms) to fire and call HideSplash
-	time.Sleep(1 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	os.WriteFile(stateDir + "/shutdown_requested", []byte(""), 0600)
 }
