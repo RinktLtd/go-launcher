@@ -115,6 +115,30 @@
   }
   .feature h4 { font-size: 0.95rem; margin-bottom: 6px; }
   .feature p { color: var(--muted); font-size: 0.85rem; margin-bottom: 0; }
+  .feature-showcase {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 32px;
+  }
+  .feature-showcase .showcase-media {
+    flex-shrink: 0;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    line-height: 0;
+  }
+  .feature-showcase .showcase-media img {
+    width: 280px;
+    height: auto;
+    display: block;
+  }
+  .feature-showcase .showcase-text h4 { font-size: 1rem; margin-bottom: 8px; }
+  .feature-showcase .showcase-text p { color: var(--muted); font-size: 0.9rem; margin-bottom: 0; }
+  @media (max-width: 640px) {
+    .feature-showcase { flex-direction: column; text-align: center; }
+    .feature-showcase .showcase-media img { width: 220px; }
+  }
 
   /* Diagram */
   .diagram {
@@ -370,6 +394,19 @@
         <h4>Cross-platform</h4>
         <p>macOS, Windows, Linux. Platform-appropriate default paths for data and install directories.</p>
       </div>
+      <div class="feature feature-showcase">
+        <div class="showcase-media">
+          <img src="splash-demo.gif" alt="Native macOS splash screen with animated spinner, progress bar, and status text" width="340" height="280" loading="lazy">
+        </div>
+        <div class="showcase-text">
+          <h4>Native splash screen</h4>
+          <p>
+            Optional <code class="inline-code">ui/splash</code> package renders a native window during updates &mdash;
+            Cocoa on macOS, Win32 on Windows. Animated spinner, progress bar, and status text keep users informed
+            while the launcher downloads and applies a new version. No Electron. No web views. Zero extra dependencies.
+          </p>
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -451,6 +488,7 @@
             <th>Rollback</th>
             <th>Supervisor</th>
             <th>Versioned dirs</th>
+            <th>Built-in UI</th>
             <th>Windows</th>
           </tr>
         </thead>
@@ -461,11 +499,13 @@
             <td class="no">Apply-time</td>
             <td class="no">No</td>
             <td class="no">No</td>
+            <td class="no">No</td>
             <td class="yes">Yes</td>
           </tr>
           <tr>
             <td><a href="https://github.com/minio/selfupdate">minio/selfupdate</a></td>
             <td>Self-surgery</td>
+            <td class="no">No</td>
             <td class="no">No</td>
             <td class="no">No</td>
             <td class="no">No</td>
@@ -477,6 +517,7 @@
             <td class="no">Apply-time</td>
             <td class="no">No</td>
             <td class="no">No</td>
+            <td class="no">No</td>
             <td class="yes">Yes</td>
           </tr>
           <tr>
@@ -486,11 +527,13 @@
             <td class="yes">Yes</td>
             <td class="no">No</td>
             <td class="no">No</td>
+            <td class="no">No</td>
           </tr>
           <tr>
             <td><a href="https://github.com/fynelabs/selfupdate">fynelabs/selfupdate</a></td>
             <td>Self-surgery</td>
             <td class="no">Apply-time</td>
+            <td class="no">No</td>
             <td class="no">No</td>
             <td class="no">No</td>
             <td class="yes">Yes</td>
@@ -499,6 +542,7 @@
             <td>go-launcher</td>
             <td>External supervisor</td>
             <td class="yes">Crash-based</td>
+            <td class="yes">Yes</td>
             <td class="yes">Yes</td>
             <td class="yes">Yes</td>
             <td class="yes">Yes</td>
