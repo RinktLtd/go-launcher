@@ -27,7 +27,10 @@ func New(cfg Config) launcher.UI {
 }
 
 // headless is a silent no-op UI for unsupported platforms.
+// Used by splash_nocgo.go and splash_other.go via build tags.
 type headless struct{}
+
+var _ launcher.UI = (*headless)(nil)
 
 func (headless) ShowSplash(string)              {}
 func (headless) UpdateProgress(float64, string) {}

@@ -507,28 +507,33 @@ func (s *winSplash) run() {
 
 	pSetTimer.Call(hwnd, spinnerTimerID, 33, 0)
 
-	go func() {
-		for cmd := range s.cmds {
-			switch cmd.kind {
-			case cmdUpdate:
-				s.mu.Lock()
-				s.progressPct = cmd.percent
-				s.statusText = cmd.text
-				s.mu.Unlock()
-				pPostMessage.Call(hwnd, wmAppUpdate, 0, 0)
-			case cmdHide:
-				pPostMessage.Call(hwnd, wmAppHide, 0, 0)
-				return
-			case cmdError:
-				s.mu.Lock()
-				s.statusText = cmd.text
-				s.mu.Unlock()
-				pPostMessage.Call(hwnd, wmAppError, 0, 0)
-				return
-			}
-		}
-	}()
+	go s.dispatchCommands(hwnd)
+	s.messageLoop(hwnd)
+}
 
+func (s *winSplash) dispatchCommands(hwnd uintptr) {
+	for cmd := range s.cmds {
+		switch cmd.kind {
+		case cmdUpdate:
+			s.mu.Lock()
+			s.progressPct = cmd.percent
+			s.statusText = cmd.text
+			s.mu.Unlock()
+			pPostMessage.Call(hwnd, wmAppUpdate, 0, 0)
+		case cmdHide:
+			pPostMessage.Call(hwnd, wmAppHide, 0, 0)
+			return
+		case cmdError:
+			s.mu.Lock()
+			s.statusText = cmd.text
+			s.mu.Unlock()
+			pPostMessage.Call(hwnd, wmAppError, 0, 0)
+			return
+		}
+	}
+}
+
+func (s *winSplash) messageLoop(hwnd uintptr) {
 	var m winMsg
 	for {
 		ret, _, _ := pGetMessage.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
