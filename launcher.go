@@ -166,7 +166,11 @@ func (l *Launcher) supervisorLoop(ctx context.Context) int {
 		deleteHeartbeat(l.cfg.DataDir)
 
 		if l.cfg.UI != nil {
-			l.cfg.UI.ShowSplash("Starting " + l.cfg.AppName + "...")
+			msg := "Starting " + l.cfg.AppName
+			if l.state.CurrentVersion != "" {
+				msg += " " + l.state.CurrentVersion
+			}
+			l.cfg.UI.ShowSplash(msg + "...")
 		}
 
 		binaryPath := childBinaryPath(l.cfg.DataDir, l.cfg.ChildBinaryName)
@@ -183,6 +187,12 @@ func (l *Launcher) supervisorLoop(ctx context.Context) int {
 		// Wait for child to exit, monitoring heartbeat
 		exitCode := l.waitForChild(ctx, child)
 		l.checkProbation(child)
+
+		// Launcher itself is shutting down (SIGINT/SIGTERM) — exit cleanly
+		if ctx.Err() != nil {
+			slog.Info("launcher shutting down", "child_exit_code", exitCode)
+			return 0
+		}
 
 		// Handle exit
 		if shutdownRequested(l.cfg.DataDir) {

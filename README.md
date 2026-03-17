@@ -9,6 +9,12 @@ The [Squirrel.Windows](https://github.com/Squirrel/Squirrel.Windows) pattern for
 
 **[Website](https://rinktltd.github.io/go-launcher/)** | **[Go Docs](https://pkg.go.dev/github.com/rinktltd/go-launcher)**
 
+<p align="center">
+  <img src="splash-demo.gif" alt="Native macOS splash screen with animated spinner, progress bar, and status text" width="340">
+  <br>
+  <sub>Built-in native splash screen (macOS Cocoa/AppKit) -- no competing Go update library offers this.</sub>
+</p>
+
 ## The Problem
 
 Every Go auto-update library uses the same approach: **self-surgery** -- the running binary replaces itself on disk, then restarts. If the new version crashes at startup, recovery logic never executes. If the replacement is interrupted (power loss, OOM kill), the binary is corrupted with no rollback path.
@@ -55,6 +61,7 @@ import (
 
     "github.com/rinktltd/go-launcher"
     "github.com/rinktltd/go-launcher/fetch"
+    "github.com/rinktltd/go-launcher/ui/splash"
 )
 
 func main() {
@@ -65,6 +72,7 @@ func main() {
         InstallDir:      launcher.DefaultInstallDir("MyApp"),
         EnvVarName:      "MYAPP_LAUNCHER_STATE_DIR",
         Fetcher:         fetch.GitHubRelease("myorg", "myapp", fetch.AssetPattern("my-app-*")),
+        UI:              splash.New(splash.Config{AppName: "My App"}),
     })
 
     os.Exit(l.Run(context.Background()))
@@ -108,15 +116,15 @@ func main() {
 
 ## How Existing Libraries Compare
 
-| Library | Approach | Rollback | Supervisor | Versioned dirs | Windows |
-|---|---|---|---|---|---|
-| [creativeprojects/go-selfupdate](https://github.com/creativeprojects/go-selfupdate) | Self-surgery | Apply-time only | No | No | Yes |
-| [minio/selfupdate](https://github.com/minio/selfupdate) | Self-surgery | No | No | No | Yes |
-| [sanbornm/go-selfupdate](https://github.com/sanbornm/go-selfupdate) | Self-surgery | No | No | No | Yes |
-| [rhysd/go-github-selfupdate](https://github.com/rhysd/go-github-selfupdate) | Self-surgery | Apply-time only | No | No | Yes |
-| [jpillora/overseer](https://github.com/jpillora/overseer) | Master/child | No | Yes | No | No |
-| [fynelabs/selfupdate](https://github.com/fynelabs/selfupdate) | Self-surgery | Apply-time only | No | No | Yes |
-| **go-launcher** | **External supervisor** | **Crash-based** | **Yes** | **Yes** | **Yes** |
+| Library | Approach | Rollback | Supervisor | Versioned dirs | Built-in UI | Windows |
+|---|---|---|---|---|---|---|
+| [creativeprojects/go-selfupdate](https://github.com/creativeprojects/go-selfupdate) | Self-surgery | Apply-time only | No | No | No | Yes |
+| [minio/selfupdate](https://github.com/minio/selfupdate) | Self-surgery | No | No | No | No | Yes |
+| [sanbornm/go-selfupdate](https://github.com/sanbornm/go-selfupdate) | Self-surgery | No | No | No | No | Yes |
+| [rhysd/go-github-selfupdate](https://github.com/rhysd/go-github-selfupdate) | Self-surgery | Apply-time only | No | No | No | Yes |
+| [jpillora/overseer](https://github.com/jpillora/overseer) | Master/child | No | Yes | No | No | No |
+| [fynelabs/selfupdate](https://github.com/fynelabs/selfupdate) | Self-surgery | Apply-time only | No | No | No | Yes |
+| **go-launcher** | **External supervisor** | **Crash-based** | **Yes** | **Yes** | **Yes** | **Yes** |
 
 **Apply-time rollback** means the `.old` file is restored if the rename/copy fails during the swap. It does not help if the new version starts successfully but crashes 30 seconds later.
 
@@ -178,7 +186,19 @@ type UI interface {
 }
 ```
 
-Pass `nil` for headless operation. All UI calls are nil-safe.
+Built-in: [`ui/splash`](ui/splash/) provides native splash screens for macOS (Cocoa/AppKit) and Windows (GDI+) with animated spinner, progress bar, and configurable branding:
+
+```go
+import "github.com/rinktltd/go-launcher/ui/splash"
+
+UI: splash.New(splash.Config{
+    AppName:   "My App",
+    Logo:      logoBytes,   // PNG, or nil for text-only
+    AccentHex: "#2E67B2",   // spinner + progress bar color
+})
+```
+
+Returns a silent no-op on Linux or when CGo is unavailable on macOS. Pass `nil` for fully headless operation.
 
 ### Registrar (optional)
 

@@ -37,6 +37,10 @@ func main() {
 		childName += ".exe"
 	}
 
+	// For a native splash screen on macOS/Windows, add:
+	//   import "github.com/rinktltd/go-launcher/ui/splash"
+	//   UI: splash.New(splash.Config{AppName: "Example App"}),
+
 	l := launcher.New(launcher.Config{
 		AppName:         "Example App",
 		ChildBinaryName: childName,
