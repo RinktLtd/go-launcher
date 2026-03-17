@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"log/slog"
+	"os"
 	"time"
 )
 
@@ -88,6 +89,8 @@ func (l *Launcher) Run(ctx context.Context) int {
 			return 0
 		}
 	}
+
+	l.registerLoginItem()
 
 	// Ensure data directory exists
 	if err := ensureDataDir(l.cfg.DataDir); err != nil {
@@ -387,6 +390,22 @@ func (l *Launcher) Executable() string {
 // DataDir returns the configured data directory.
 func (l *Launcher) DataDir() string {
 	return l.cfg.DataDir
+}
+
+// registerLoginItem registers the launcher as an OS login item.
+// Idempotent and non-fatal — logs a warning on failure.
+func (l *Launcher) registerLoginItem() {
+	if l.cfg.Registrar == nil {
+		return
+	}
+	execPath, err := os.Executable()
+	if err != nil {
+		slog.Warn("cannot determine executable path for registration", "error", err)
+		return
+	}
+	if err := l.cfg.Registrar.RegisterLoginItem(execPath); err != nil {
+		slog.Warn("login item registration failed", "error", err)
+	}
 }
 
 // Shutdown writes shutdown_requested and can be called from the child
