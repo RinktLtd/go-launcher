@@ -54,6 +54,7 @@ func baseTestConfig(binName, dataDir string) Config {
 		CrashThreshold:  3,
 		CrashWindow:     10 * time.Second,
 		KillTimeout:     2 * time.Second,
+		HeartbeatPoll:   50 * time.Millisecond,
 	}
 }
 
@@ -648,8 +649,8 @@ func main() {
 	f, _ := os.Create(stateDir + "/heartbeat")
 	f.Close()
 
-	// Wait for heartbeat ticker (500ms) to fire and call HideSplash
-	time.Sleep(3 * time.Second)
+	// Wait for heartbeat poll to fire and call HideSplash
+	time.Sleep(1 * time.Second)
 
 	os.WriteFile(stateDir + "/shutdown_requested", []byte(""), 0600)
 }

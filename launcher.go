@@ -13,6 +13,7 @@ var (
 	defaultProbationDuration = 10 * time.Minute
 	defaultKillTimeout       = 30 * time.Second
 	defaultCrashWindow       = 5 * time.Minute
+	defaultHeartbeatPoll     = 500 * time.Millisecond
 )
 
 // Config configures the launcher behavior.
@@ -31,6 +32,7 @@ type Config struct {
 	CrashWindow       time.Duration   // crash count resets after this duration (default: 5min)
 	ProbationDuration time.Duration   // new version probation (default: 10min)
 	KillTimeout       time.Duration   // SIGTERM → SIGKILL escalation (default: 30s)
+	HeartbeatPoll     time.Duration   // heartbeat check interval (default: 500ms)
 
 	// Pluggable components.
 	UI        UI        // nil = headless
@@ -61,6 +63,9 @@ func New(cfg Config) *Launcher {
 	}
 	if cfg.KillTimeout == 0 {
 		cfg.KillTimeout = defaultKillTimeout
+	}
+	if cfg.HeartbeatPoll == 0 {
+		cfg.HeartbeatPoll = defaultHeartbeatPoll
 	}
 	return &Launcher{cfg: cfg}
 }
@@ -322,7 +327,7 @@ func (l *Launcher) handleUpdate(ctx context.Context) bool {
 // to dismiss the splash screen.
 func (l *Launcher) waitForChild(ctx context.Context, cp *childProcess) int {
 	heartbeatChecked := false
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(l.cfg.HeartbeatPoll)
 	defer ticker.Stop()
 
 	for {
