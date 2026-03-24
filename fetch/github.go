@@ -9,7 +9,7 @@ import (
 	"path"
 	"strings"
 
-	launcher "github.com/rinktltd/go-launcher"
+	launcher "github.com/razvandimescu/go-launcher"
 )
 
 type githubFetcher struct {

@@ -26,7 +26,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/rinktltd/go-launcher"
+	"github.com/razvandimescu/go-launcher"
 )
 
 func main() {
@@ -38,7 +38,7 @@ func main() {
 	}
 
 	// For a native splash screen on macOS/Windows, add:
-	//   import "github.com/rinktltd/go-launcher/ui/splash"
+	//   import "github.com/razvandimescu/go-launcher/ui/splash"
 	//   UI: splash.New(splash.Config{AppName: "Example App"}),
 
 	l := launcher.New(launcher.Config{

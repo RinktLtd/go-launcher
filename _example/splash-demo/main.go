@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/rinktltd/go-launcher/ui/splash"
+	"github.com/razvandimescu/go-launcher/ui/splash"
 )
 
 func main() {

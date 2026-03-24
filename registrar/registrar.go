@@ -2,7 +2,7 @@
 // including login items (start at user login) and system services.
 package registrar
 
-import launcher "github.com/rinktltd/go-launcher"
+import launcher "github.com/razvandimescu/go-launcher"
 
 // Config configures the registrar.
 type Config struct {

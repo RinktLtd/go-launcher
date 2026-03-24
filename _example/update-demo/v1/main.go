@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/rinktltd/go-launcher/child"
+	"github.com/razvandimescu/go-launcher/child"
 )
 
 func init() {

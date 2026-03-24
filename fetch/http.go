@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	launcher "github.com/rinktltd/go-launcher"
+	launcher "github.com/razvandimescu/go-launcher"
 )
 
 type httpFetcher struct {

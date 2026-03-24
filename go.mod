@@ -1,4 +1,4 @@
-module github.com/rinktltd/go-launcher
+module github.com/razvandimescu/go-launcher
 
 go 1.25.0
 

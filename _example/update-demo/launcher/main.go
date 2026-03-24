@@ -9,8 +9,8 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/rinktltd/go-launcher"
-	"github.com/rinktltd/go-launcher/fetch"
+	"github.com/razvandimescu/go-launcher"
+	"github.com/razvandimescu/go-launcher/fetch"
 )
 
 func main() {

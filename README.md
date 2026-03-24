@@ -1,13 +1,13 @@
 # go-launcher
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/rinktltd/go-launcher.svg)](https://pkg.go.dev/github.com/rinktltd/go-launcher)
-[![CI](https://github.com/rinktltd/go-launcher/actions/workflows/ci.yml/badge.svg)](https://github.com/rinktltd/go-launcher/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/rinktltd/go-launcher)](https://goreportcard.com/report/github.com/rinktltd/go-launcher)
+[![Go Reference](https://pkg.go.dev/badge/github.com/razvandimescu/go-launcher.svg)](https://pkg.go.dev/github.com/razvandimescu/go-launcher)
+[![CI](https://github.com/razvandimescu/go-launcher/actions/workflows/ci.yml/badge.svg)](https://github.com/razvandimescu/go-launcher/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/razvandimescu/go-launcher)](https://goreportcard.com/report/github.com/razvandimescu/go-launcher)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 The [Squirrel.Windows](https://github.com/Squirrel/Squirrel.Windows) pattern for Go. External supervisor with versioned directories, crash-based rollback, and zero-dependency child integration.
 
-**[Website](https://rinktltd.github.io/go-launcher/)** | **[Go Docs](https://pkg.go.dev/github.com/rinktltd/go-launcher)**
+**[Website](https://razvandimescu.github.io/go-launcher/)** | **[Go Docs](https://pkg.go.dev/github.com/razvandimescu/go-launcher)**
 
 <p align="center">
   <img src="splash-demo.gif" alt="Native macOS splash screen with animated spinner, progress bar, and status text" width="340">
@@ -59,9 +59,9 @@ import (
     "context"
     "os"
 
-    "github.com/rinktltd/go-launcher"
-    "github.com/rinktltd/go-launcher/fetch"
-    "github.com/rinktltd/go-launcher/ui/splash"
+    "github.com/razvandimescu/go-launcher"
+    "github.com/razvandimescu/go-launcher/fetch"
+    "github.com/razvandimescu/go-launcher/ui/splash"
 )
 
 func main() {
@@ -89,7 +89,7 @@ package main
 import (
     "os"
 
-    "github.com/rinktltd/go-launcher/child"
+    "github.com/razvandimescu/go-launcher/child"
 )
 
 func init() {
@@ -189,7 +189,7 @@ type UI interface {
 Built-in: [`ui/splash`](ui/splash/) provides native splash screens for macOS (Cocoa/AppKit) and Windows (GDI+) with animated spinner, progress bar, and configurable branding:
 
 ```go
-import "github.com/rinktltd/go-launcher/ui/splash"
+import "github.com/razvandimescu/go-launcher/ui/splash"
 
 UI: splash.New(splash.Config{
     AppName:   "My App",
@@ -268,6 +268,3 @@ MIT
 
 Issues and pull requests are welcome. See the [_example/](./_example/) directory for a working launcher + child pair you can use for testing.
 
----
-
-go-launcher is maintained by [Rinkt](https://rinkt.com), where we use it to ship reliable updates for our RPA platform across macOS, Windows, and Linux.
