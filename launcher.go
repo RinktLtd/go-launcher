@@ -312,7 +312,7 @@ func (l *Launcher) checkProbation(child *childProcess) {
 	if l.state.ProbationUntil.IsZero() {
 		return
 	}
-	if !heartbeatTouchedAfter(l.cfg.DataDir, child.spawnTime) {
+	if !heartbeatExists(l.cfg.DataDir) {
 		return
 	}
 	if child.WallRuntime() <= l.cfg.ProbationDuration {
@@ -373,7 +373,7 @@ func (l *Launcher) waitForChild(ctx context.Context, cp *childProcess) int {
 		case <-cp.Done():
 			return cp.ExitCode()
 		case <-ticker.C:
-			if !heartbeatChecked && heartbeatTouchedAfter(l.cfg.DataDir, cp.spawnTime) {
+			if !heartbeatChecked && heartbeatExists(l.cfg.DataDir) {
 				heartbeatChecked = true
 				ticker.Stop()
 				slog.Info("child is healthy (heartbeat detected)")

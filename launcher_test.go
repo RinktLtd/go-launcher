@@ -281,12 +281,12 @@ func TestIPCFiles(t *testing.T) {
 	dataDir := t.TempDir()
 
 	// Heartbeat
-	if heartbeatTouchedAfter(dataDir, time.Now().Add(-time.Hour)) {
+	if heartbeatExists(dataDir) {
 		t.Error("heartbeat should not exist yet")
 	}
 
 	os.WriteFile(filepath.Join(dataDir, heartbeatFile), []byte(""), 0600)
-	if !heartbeatTouchedAfter(dataDir, time.Now().Add(-time.Hour)) {
+	if !heartbeatExists(dataDir) {
 		t.Error("heartbeat should exist now")
 	}
 

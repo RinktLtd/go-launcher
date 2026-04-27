@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 const (
@@ -13,13 +12,15 @@ const (
 	pendingUpdateFile = "pending_update.json"
 )
 
-// heartbeatTouchedAfter returns true if the heartbeat file's mtime is after t.
-func heartbeatTouchedAfter(dataDir string, t time.Time) bool {
-	info, err := os.Stat(filepath.Join(dataDir, heartbeatFile))
-	if err != nil {
-		return false
-	}
-	return info.ModTime().After(t)
+// heartbeatExists returns true if the heartbeat file is present. The launcher
+// deletes the heartbeat before every spawn, so existence proves the current
+// child created it. mtime comparison is unreliable: Linux's current_time()
+// uses ktime_get_coarse_real_ts64 (jiffy-quantized) while Go's time.Now()
+// is nanosecond-precise, so a sub-jiffy spawn-then-touch sequence can leave
+// mtime <= spawnTime even though the touch happened strictly later.
+func heartbeatExists(dataDir string) bool {
+	_, err := os.Stat(filepath.Join(dataDir, heartbeatFile))
+	return err == nil
 }
 
 // shutdownRequested returns true if the shutdown_requested file exists.
