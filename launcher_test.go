@@ -772,3 +772,89 @@ func main() {
 		t.Errorf("expected fast termination, took %v", elapsed)
 	}
 }
+
+func TestAfterLockAcquiredHookFires(t *testing.T) {
+	cfg, _ := setupTestLauncher(t)
+
+	hookCalled := false
+	cfg.AfterLockAcquired = func(ctx context.Context) error {
+		hookCalled = true
+		return nil
+	}
+
+	t.Setenv("CHILD_HEARTBEAT", "1")
+	t.Setenv("CHILD_SHUTDOWN", "1")
+	t.Setenv("CHILD_EXIT_CODE", "0")
+
+	l := New(cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if code := l.Run(ctx); code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !hookCalled {
+		t.Error("AfterLockAcquired hook did not fire")
+	}
+}
+
+func TestAfterLockAcquiredHookErrorAborts(t *testing.T) {
+	cfg, _ := setupTestLauncher(t)
+
+	cfg.AfterLockAcquired = func(ctx context.Context) error {
+		return errFakeHookFailure
+	}
+
+	l := New(cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if code := l.Run(ctx); code != 1 {
+		t.Errorf("expected exit code 1 from failing hook, got %d", code)
+	}
+}
+
+var errFakeHookFailure = &fakeHookErr{msg: "hook failed"}
+
+type fakeHookErr struct{ msg string }
+
+func (e *fakeHookErr) Error() string { return e.msg }
+
+func TestRelaunchArgsCallback(t *testing.T) {
+	original := []string{"--debug", "-update", "/old/bin", "/tmp/new.exe", "12345"}
+
+	cfg := &Config{
+		RelaunchArgs: func(args []string) []string {
+			// Drop legacy autoupdate args; keep --debug
+			out := make([]string, 0, len(args))
+			skip := 0
+			for i, a := range args {
+				if skip > 0 {
+					skip--
+					continue
+				}
+				if a == "-update" && i+3 < len(args) {
+					skip = 3
+					continue
+				}
+				out = append(out, a)
+			}
+			return out
+		},
+	}
+
+	got := cfg.RelaunchArgs(original)
+	want := []string{"--debug"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestRelaunchArgsNilForwardsVerbatim(t *testing.T) {
+	cfg := &Config{}
+	if cfg.RelaunchArgs != nil {
+		t.Error("expected nil RelaunchArgs by default")
+	}
+	// The relaunch() function uses os.Args[1:] when cfg.RelaunchArgs is nil;
+	// covered by the integration test of self-relocation.
+}

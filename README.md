@@ -224,6 +224,11 @@ launcher.Config{
     InstallDir      string          // where the launcher lives permanently
     EnvVarName      string          // env var set on child process
 
+    // Stable filename in InstallDir after self-relocation. Empty = use the
+    // basename of the binary that was actually launched (which may be
+    // version-tagged by an installer, e.g. MyApp-1.0-installer.exe).
+    LauncherBinaryName string
+
     // Optional (sensible defaults)
     ChildArgs         []string        // args forwarded to child (default: none)
     Backoff           []time.Duration // restart delays (default: [2s, 5s, 15s])
@@ -236,6 +241,22 @@ launcher.Config{
     UI        UI          // nil = headless
     Fetcher   Fetcher     // nil = no bootstrap/updates
     Registrar Registrar   // nil = skip OS registration
+
+    // Lifecycle hooks
+    AfterLockAcquired func(ctx context.Context) error
+        // Runs once the launcher has won the singleton lockfile race and
+        // before any bootstrap/supervisor work. Use it for one-time setup
+        // that must only execute on the actively supervising process —
+        // legacy cleanup, migration tasks, registry changes that would
+        // race a concurrent launcher invocation. A non-nil error from the
+        // hook causes Run to return 1.
+
+    RelaunchArgs func(args []string) []string
+        // Transforms the arguments forwarded to the relocated launcher
+        // copy after self-relocation. Default forwards os.Args[1:]
+        // verbatim. Return nil or an empty slice to drop all arguments —
+        // useful when the launcher was invoked through a legacy installer
+        // protocol whose arguments should not propagate.
 }
 ```
 
