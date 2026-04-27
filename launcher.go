@@ -120,7 +120,7 @@ func (l *Launcher) Status() *State {
 func (l *Launcher) Run(ctx context.Context) int {
 	// Self-relocate on first run
 	if l.cfg.InstallDir != "" {
-		relocated, err := selfRelocate(&l.cfg)
+		relocated, err := selfRelocate(l.cfg.InstallDir, l.cfg.LauncherBinaryName, l.cfg.RelaunchArgs)
 		if err != nil {
 			slog.Error("self-relocation failed (continuing from current location)", "error", err)
 		}

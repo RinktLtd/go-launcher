@@ -2,10 +2,12 @@ package launcher
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sync"
 	"testing"
@@ -802,7 +804,7 @@ func TestAfterLockAcquiredHookErrorAborts(t *testing.T) {
 	cfg, _ := setupTestLauncher(t)
 
 	cfg.AfterLockAcquired = func(ctx context.Context) error {
-		return errFakeHookFailure
+		return errors.New("hook failed")
 	}
 
 	l := New(cfg)
@@ -814,47 +816,38 @@ func TestAfterLockAcquiredHookErrorAborts(t *testing.T) {
 	}
 }
 
-var errFakeHookFailure = &fakeHookErr{msg: "hook failed"}
+func TestResolveRelaunchArgs(t *testing.T) {
+	args := []string{"--debug", "-update", "/old", "/new", "1234"}
 
-type fakeHookErr struct{ msg string }
-
-func (e *fakeHookErr) Error() string { return e.msg }
-
-func TestRelaunchArgsCallback(t *testing.T) {
-	original := []string{"--debug", "-update", "/old/bin", "/tmp/new.exe", "12345"}
-
-	cfg := &Config{
-		RelaunchArgs: func(args []string) []string {
-			// Drop legacy autoupdate args; keep --debug
-			out := make([]string, 0, len(args))
-			skip := 0
-			for i, a := range args {
-				if skip > 0 {
-					skip--
-					continue
-				}
-				if a == "-update" && i+3 < len(args) {
-					skip = 3
-					continue
-				}
-				out = append(out, a)
-			}
-			return out
-		},
+	if got := resolveRelaunchArgs(nil, args); !reflect.DeepEqual(got, args) {
+		t.Errorf("nil transform: got %v, want %v", got, args)
 	}
 
-	got := cfg.RelaunchArgs(original)
-	want := []string{"--debug"}
-	if len(got) != len(want) || got[0] != want[0] {
-		t.Errorf("got %v, want %v", got, want)
+	drop := func([]string) []string { return nil }
+	if got := resolveRelaunchArgs(drop, args); len(got) != 0 {
+		t.Errorf("drop transform: got %v, want empty", got)
+	}
+
+	keepFirst := func(a []string) []string { return a[:1] }
+	if got := resolveRelaunchArgs(keepFirst, args); !reflect.DeepEqual(got, []string{"--debug"}) {
+		t.Errorf("keepFirst transform: got %v, want [--debug]", got)
 	}
 }
 
-func TestRelaunchArgsNilForwardsVerbatim(t *testing.T) {
-	cfg := &Config{}
-	if cfg.RelaunchArgs != nil {
-		t.Error("expected nil RelaunchArgs by default")
+func TestRelocateDestName(t *testing.T) {
+	cases := []struct {
+		name, binaryName, execPath, want string
+	}{
+		{"empty falls back to exec basename", "", "/tmp/MyApp-1.0-installer.exe", "MyApp-1.0-installer.exe"},
+		{"explicit name wins", "MyApp.exe", "/tmp/MyApp-1.0-installer.exe", "MyApp.exe"},
+		{"path traversal stripped", "../evil.exe", "/tmp/installer", "evil.exe"},
+		{"subdir stripped", "sub/dir/MyApp.exe", "/tmp/installer", "MyApp.exe"},
 	}
-	// The relaunch() function uses os.Args[1:] when cfg.RelaunchArgs is nil;
-	// covered by the integration test of self-relocation.
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := relocateDestName(tc.binaryName, tc.execPath); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
