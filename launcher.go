@@ -25,6 +25,14 @@ type Config struct {
 	InstallDir      string // where the launcher binary should live
 	EnvVarName      string // env var set on child process (e.g. "MYAPP_LAUNCHER_STATE_DIR")
 
+	// LauncherBinaryName overrides the filename used when relocating the
+	// launcher binary into InstallDir. Defaults to the basename of the
+	// currently running executable, which is brittle: a binary launched as
+	// MyApp-1.0-installer.exe lands at InstallDir/MyApp-1.0-installer.exe
+	// permanently. Set this to a stable name (e.g. "MyApp.exe") for a
+	// deterministic install location.
+	LauncherBinaryName string
+
 	// Optional with sensible defaults.
 	ChildArgs         []string        // args forwarded to child (default: none)
 	Backoff           []time.Duration // restart delays (default: [2s, 5s, 15s])
@@ -38,6 +46,21 @@ type Config struct {
 	UI        UI        // nil = headless
 	Fetcher   Fetcher   // nil = no bootstrap/updates
 	Registrar Registrar // nil = skip OS registration
+
+	// AfterLockAcquired runs once the launcher has won the singleton
+	// lockfile race and before any bootstrap or supervisor work. Use it
+	// for one-time setup that must only execute on the actively
+	// supervising process — legacy cleanup, migration tasks, registry
+	// changes that should not race a concurrent launcher invocation.
+	// A non-nil error from the hook causes Run to return 1.
+	AfterLockAcquired func(ctx context.Context) error
+
+	// RelaunchArgs transforms the arguments forwarded to the relocated
+	// launcher copy after self-relocation. If nil, os.Args[1:] is
+	// forwarded verbatim. Return nil or an empty slice to drop all
+	// arguments — useful when the launcher was invoked through a legacy
+	// installer protocol whose arguments should not propagate.
+	RelaunchArgs func(args []string) []string
 }
 
 // Launcher supervises a child process with versioned deployments and rollback.
@@ -70,6 +93,17 @@ func New(cfg Config) *Launcher {
 	return &Launcher{cfg: cfg}
 }
 
+func (l *Launcher) runAfterLockHook(ctx context.Context) error {
+	if l.cfg.AfterLockAcquired == nil {
+		return nil
+	}
+	if err := l.cfg.AfterLockAcquired(ctx); err != nil {
+		slog.Error("AfterLockAcquired hook failed", "error", err)
+		return err
+	}
+	return nil
+}
+
 // Status returns the current launcher state (for --status flag).
 func (l *Launcher) Status() *State {
 	if l.state == nil {
@@ -86,7 +120,7 @@ func (l *Launcher) Status() *State {
 func (l *Launcher) Run(ctx context.Context) int {
 	// Self-relocate on first run
 	if l.cfg.InstallDir != "" {
-		relocated, err := selfRelocate(l.cfg.InstallDir)
+		relocated, err := selfRelocate(&l.cfg)
 		if err != nil {
 			slog.Error("self-relocation failed (continuing from current location)", "error", err)
 		}
@@ -110,6 +144,10 @@ func (l *Launcher) Run(ctx context.Context) int {
 		return 1
 	}
 	defer l.lock.Release()
+
+	if err := l.runAfterLockHook(ctx); err != nil {
+		return 1
+	}
 
 	// Load state
 	var err error

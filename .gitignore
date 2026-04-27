@@ -1,0 +1,6 @@
+# Local-only working notes that don't ship with the library
+private-docs/
+
+# Go build artifacts
+*.test
+*.out

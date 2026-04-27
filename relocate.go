@@ -14,7 +14,8 @@ import (
 // selfRelocate copies the running binary to the install directory and relaunches
 // from there. Returns true if relocation happened (caller should exit).
 // Returns false if already running from the install directory.
-func selfRelocate(installDir string) (bool, error) {
+func selfRelocate(cfg *Config) (bool, error) {
+	installDir := cfg.InstallDir
 	execPath, err := os.Executable()
 	if err != nil {
 		return false, fmt.Errorf("get executable path: %w", err)
@@ -36,7 +37,11 @@ func selfRelocate(installDir string) (bool, error) {
 			return false, nil
 		}
 	} else if pathsEqual(filepath.Dir(execPath), installDir) {
-		return false, nil // already in install dir
+		// Already inside InstallDir; if the caller requested a specific
+		// filename and we're not it, that's a name drift — but renaming a
+		// running binary is OS-specific, so treat as already-relocated and
+		// continue. The caller can rename out-of-band on next launch.
+		return false, nil
 	}
 
 	slog.Info("first run detected, relocating to install directory",
@@ -46,9 +51,10 @@ func selfRelocate(installDir string) (bool, error) {
 		return false, fmt.Errorf("create install dir: %w", err)
 	}
 
-	destPath := filepath.Join(installDir, filepath.Base(execPath))
+	destPath := filepath.Join(installDir, relocateDestName(cfg, execPath))
 
-	// On macOS with .app bundle, move the entire bundle
+	// On macOS with .app bundle, move the entire bundle. LauncherBinaryName
+	// doesn't apply here — the bundle name is determined by Info.plist.
 	if runtime.GOOS == "darwin" {
 		if idx := strings.Index(execPath, ".app/"); idx != -1 {
 			bundlePath := execPath[:idx+4]
@@ -63,7 +69,7 @@ func selfRelocate(installDir string) (bool, error) {
 
 			// Relaunch from the new bundle
 			newExec := filepath.Join(destPath, execPath[idx+4:])
-			return true, relaunch(newExec)
+			return true, relaunch(newExec, cfg)
 		}
 	}
 
@@ -76,11 +82,22 @@ func selfRelocate(installDir string) (bool, error) {
 		return false, fmt.Errorf("chmod: %w", err)
 	}
 
-	return true, relaunch(destPath)
+	return true, relaunch(destPath, cfg)
 }
 
-func relaunch(binaryPath string) error {
-	cmd := exec.Command(binaryPath, os.Args[1:]...)
+func relocateDestName(cfg *Config, execPath string) string {
+	if cfg != nil && cfg.LauncherBinaryName != "" {
+		return cfg.LauncherBinaryName
+	}
+	return filepath.Base(execPath)
+}
+
+func relaunch(binaryPath string, cfg *Config) error {
+	args := os.Args[1:]
+	if cfg != nil && cfg.RelaunchArgs != nil {
+		args = cfg.RelaunchArgs(args)
+	}
+	cmd := exec.Command(binaryPath, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
