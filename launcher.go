@@ -120,7 +120,7 @@ func (l *Launcher) Status() *State {
 func (l *Launcher) Run(ctx context.Context) int {
 	// Self-relocate on first run
 	if l.cfg.InstallDir != "" {
-		relocated, err := selfRelocate(&l.cfg)
+		relocated, err := selfRelocate(l.cfg.InstallDir, l.cfg.LauncherBinaryName, l.cfg.RelaunchArgs)
 		if err != nil {
 			slog.Error("self-relocation failed (continuing from current location)", "error", err)
 		}
@@ -312,7 +312,7 @@ func (l *Launcher) checkProbation(child *childProcess) {
 	if l.state.ProbationUntil.IsZero() {
 		return
 	}
-	if !heartbeatTouchedAfter(l.cfg.DataDir, child.spawnTime) {
+	if !heartbeatExists(l.cfg.DataDir) {
 		return
 	}
 	if child.WallRuntime() <= l.cfg.ProbationDuration {
@@ -373,7 +373,7 @@ func (l *Launcher) waitForChild(ctx context.Context, cp *childProcess) int {
 		case <-cp.Done():
 			return cp.ExitCode()
 		case <-ticker.C:
-			if !heartbeatChecked && heartbeatTouchedAfter(l.cfg.DataDir, cp.spawnTime) {
+			if !heartbeatChecked && heartbeatExists(l.cfg.DataDir) {
 				heartbeatChecked = true
 				ticker.Stop()
 				slog.Info("child is healthy (heartbeat detected)")

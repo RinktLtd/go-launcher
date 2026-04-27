@@ -14,8 +14,7 @@ import (
 // selfRelocate copies the running binary to the install directory and relaunches
 // from there. Returns true if relocation happened (caller should exit).
 // Returns false if already running from the install directory.
-func selfRelocate(cfg *Config) (bool, error) {
-	installDir := cfg.InstallDir
+func selfRelocate(installDir, binaryName string, transformArgs func([]string) []string) (bool, error) {
 	execPath, err := os.Executable()
 	if err != nil {
 		return false, fmt.Errorf("get executable path: %w", err)
@@ -31,16 +30,14 @@ func selfRelocate(cfg *Config) (bool, error) {
 			bundlePath := execPath[:idx+4] // up to and including ".app"
 			bundleDir := filepath.Dir(bundlePath)
 			if pathsEqual(bundleDir, installDir) {
-				return false, nil // already in install dir
+				return false, nil
 			}
 		} else if pathsEqual(filepath.Dir(execPath), installDir) {
+			warnOnNameDrift(binaryName, execPath)
 			return false, nil
 		}
 	} else if pathsEqual(filepath.Dir(execPath), installDir) {
-		// Already inside InstallDir; if the caller requested a specific
-		// filename and we're not it, that's a name drift — but renaming a
-		// running binary is OS-specific, so treat as already-relocated and
-		// continue. The caller can rename out-of-band on next launch.
+		warnOnNameDrift(binaryName, execPath)
 		return false, nil
 	}
 
@@ -51,29 +48,25 @@ func selfRelocate(cfg *Config) (bool, error) {
 		return false, fmt.Errorf("create install dir: %w", err)
 	}
 
-	destPath := filepath.Join(installDir, relocateDestName(cfg, execPath))
+	destPath := filepath.Join(installDir, relocateDestName(binaryName, execPath))
 
-	// On macOS with .app bundle, move the entire bundle. LauncherBinaryName
-	// doesn't apply here — the bundle name is determined by Info.plist.
+	// On macOS .app bundles, the bundle name comes from Info.plist; binaryName does not apply.
 	if runtime.GOOS == "darwin" {
 		if idx := strings.Index(execPath, ".app/"); idx != -1 {
 			bundlePath := execPath[:idx+4]
 			destPath = filepath.Join(installDir, filepath.Base(bundlePath))
 			if err := os.Rename(bundlePath, destPath); err != nil {
-				// Rename failed (cross-device), fall back to copy
 				if err := copyDir(bundlePath, destPath); err != nil {
 					return false, fmt.Errorf("copy app bundle: %w", err)
 				}
 			}
 			removeQuarantine(destPath)
 
-			// Relaunch from the new bundle
 			newExec := filepath.Join(destPath, execPath[idx+4:])
-			return true, relaunch(newExec, cfg)
+			return true, relaunch(newExec, transformArgs)
 		}
 	}
 
-	// Copy single binary
 	if err := copyFile(execPath, destPath); err != nil {
 		return false, fmt.Errorf("copy binary: %w", err)
 	}
@@ -82,22 +75,36 @@ func selfRelocate(cfg *Config) (bool, error) {
 		return false, fmt.Errorf("chmod: %w", err)
 	}
 
-	return true, relaunch(destPath, cfg)
+	return true, relaunch(destPath, transformArgs)
 }
 
-func relocateDestName(cfg *Config, execPath string) string {
-	if cfg != nil && cfg.LauncherBinaryName != "" {
-		return cfg.LauncherBinaryName
+func relocateDestName(binaryName, execPath string) string {
+	if binaryName != "" {
+		return filepath.Base(binaryName)
 	}
 	return filepath.Base(execPath)
 }
 
-func relaunch(binaryPath string, cfg *Config) error {
-	args := os.Args[1:]
-	if cfg != nil && cfg.RelaunchArgs != nil {
-		args = cfg.RelaunchArgs(args)
+func warnOnNameDrift(binaryName, execPath string) {
+	if binaryName == "" {
+		return
 	}
-	cmd := exec.Command(binaryPath, args...)
+	have := filepath.Base(execPath)
+	if have != filepath.Base(binaryName) {
+		slog.Warn("launcher running under unexpected filename; rename will not take effect on a running binary",
+			"have", have, "want", binaryName)
+	}
+}
+
+func resolveRelaunchArgs(transform func([]string) []string, args []string) []string {
+	if transform == nil {
+		return args
+	}
+	return transform(args)
+}
+
+func relaunch(binaryPath string, transformArgs func([]string) []string) error {
+	cmd := exec.Command(binaryPath, resolveRelaunchArgs(transformArgs, os.Args[1:])...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
