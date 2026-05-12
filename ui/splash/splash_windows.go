@@ -6,6 +6,7 @@ import (
 	"math"
 	"runtime"
 	"sync"
+	"time"
 	"unicode/utf8"
 	"unsafe"
 
@@ -49,7 +50,13 @@ var (
 	pGlobalUnlock     = kernel32.NewProc("GlobalUnlock")
 
 	// gdi32
-	pCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
+	pCreateRoundRectRgn     = gdi32.NewProc("CreateRoundRectRgn")
+	pCreateCompatibleDC     = gdi32.NewProc("CreateCompatibleDC")
+	pCreateCompatibleBitmap = gdi32.NewProc("CreateCompatibleBitmap")
+	pSelectObject           = gdi32.NewProc("SelectObject")
+	pBitBlt                 = gdi32.NewProc("BitBlt")
+	pDeleteObject           = gdi32.NewProc("DeleteObject")
+	pDeleteDC               = gdi32.NewProc("DeleteDC")
 
 	// gdiplus
 	pGdiplusStartup               = gdiplus.NewProc("GdiplusStartup")
@@ -119,6 +126,8 @@ const (
 	unitPixel              = 2
 	lineCapRound           = 2
 	spinnerTimerID         = 1
+	srcCopy                = 0x00CC0020
+	spinnerPeriodMs        = 1000 // one full revolution per second
 )
 
 // ── Layout (matches macOS) ──
@@ -213,10 +222,11 @@ type winSplash struct {
 	cfg        Config
 	accentARGB uint32
 
-	mu           sync.Mutex
-	statusText   string
-	progressPct  float64
-	spinnerAngle float32
+	mu          sync.Mutex
+	statusText  string
+	progressPct float64
+
+	startTime time.Time
 
 	gdipToken  uintptr
 	gdipImage  uintptr
@@ -224,6 +234,20 @@ type winSplash struct {
 	statusFont uintptr
 	fontFamily uintptr
 	strFormat  uintptr
+
+	// cached GDI+ brushes and pens (reused across frames)
+	whiteBrush     uintptr
+	lightGrayBrush uintptr
+	accentBrush    uintptr
+	titleBrush     uintptr
+	statusBrush    uintptr
+	trackPen       uintptr
+	arcPen         uintptr
+
+	// double-buffer (lazy-created on first paint)
+	memDC     uintptr
+	memBitmap uintptr
+	oldBitmap uintptr
 }
 
 func newPlatform(cfg Config) *winSplash {
@@ -268,11 +292,8 @@ func f32bits(f float32) uintptr {
 	return uintptr(math.Float32bits(f))
 }
 
-func gdipFillRect(graphics uintptr, color uint32, x, y, w, h int) {
-	var brush uintptr
-	pGdipCreateSolidFill.Call(uintptr(color), uintptr(unsafe.Pointer(&brush)))
+func gdipFillRect(graphics, brush uintptr, x, y, w, h int) {
 	pGdipFillRectangleI.Call(graphics, brush, uintptr(x), uintptr(y), uintptr(w), uintptr(h))
-	pGdipDeleteBrush.Call(brush)
 }
 
 func loadPNGFromMemory(data []byte) uintptr {
@@ -324,9 +345,32 @@ func (s *winSplash) initGDIPlus() {
 
 	pGdipCreateStringFormat.Call(0, 0, uintptr(unsafe.Pointer(&s.strFormat)))
 	pGdipSetStringFormatAlign.Call(s.strFormat, stringAlignCenter)
+
+	pGdipCreateSolidFill.Call(uintptr(uint32(colorWhiteBg)), uintptr(unsafe.Pointer(&s.whiteBrush)))
+	pGdipCreateSolidFill.Call(uintptr(uint32(colorLightGray)), uintptr(unsafe.Pointer(&s.lightGrayBrush)))
+	pGdipCreateSolidFill.Call(uintptr(s.accentARGB), uintptr(unsafe.Pointer(&s.accentBrush)))
+	pGdipCreateSolidFill.Call(uintptr(uint32(colorTitle)), uintptr(unsafe.Pointer(&s.titleBrush)))
+	pGdipCreateSolidFill.Call(uintptr(uint32(colorStatus)), uintptr(unsafe.Pointer(&s.statusBrush)))
+
+	pGdipCreatePen1.Call(uintptr(uint32(colorLightGray)), f32bits(2.5), unitPixel,
+		uintptr(unsafe.Pointer(&s.trackPen)))
+	pGdipCreatePen1.Call(uintptr(s.accentARGB), f32bits(2.5), unitPixel,
+		uintptr(unsafe.Pointer(&s.arcPen)))
+	pGdipSetPenLineCap197819.Call(s.arcPen, lineCapRound, lineCapRound, 0)
 }
 
 func (s *winSplash) shutdownGDIPlus() {
+	for _, b := range []uintptr{s.whiteBrush, s.lightGrayBrush, s.accentBrush, s.titleBrush, s.statusBrush} {
+		if b != 0 {
+			pGdipDeleteBrush.Call(b)
+		}
+	}
+	if s.trackPen != 0 {
+		pGdipDeletePen.Call(s.trackPen)
+	}
+	if s.arcPen != 0 {
+		pGdipDeletePen.Call(s.arcPen)
+	}
 	if s.strFormat != 0 {
 		pGdipDeleteStringFormat.Call(s.strFormat)
 	}
@@ -345,20 +389,34 @@ func (s *winSplash) shutdownGDIPlus() {
 	if s.gdipToken != 0 {
 		pGdiplusShutdown.Call(s.gdipToken)
 	}
+	if s.memDC != 0 {
+		if s.oldBitmap != 0 {
+			pSelectObject.Call(s.memDC, s.oldBitmap)
+		}
+		if s.memBitmap != 0 {
+			pDeleteObject.Call(s.memBitmap)
+		}
+		pDeleteDC.Call(s.memDC)
+	}
 }
 
 func (s *winSplash) paint(hdc uintptr) {
+	if s.memDC == 0 {
+		s.memDC, _, _ = pCreateCompatibleDC.Call(hdc)
+		s.memBitmap, _, _ = pCreateCompatibleBitmap.Call(hdc, winW, winH)
+		s.oldBitmap, _, _ = pSelectObject.Call(s.memDC, s.memBitmap)
+	}
+
 	var graphics uintptr
-	pGdipCreateFromHDC.Call(hdc, uintptr(unsafe.Pointer(&graphics)))
+	pGdipCreateFromHDC.Call(s.memDC, uintptr(unsafe.Pointer(&graphics)))
 	if graphics == 0 {
 		return
 	}
-	defer pGdipDeleteGraphics.Call(graphics)
 
 	pGdipSetSmoothingMode.Call(graphics, smoothingAntiAlias)
 	pGdipSetTextRenderingHint.Call(graphics, textRenderingClearType)
 
-	gdipFillRect(graphics, colorWhiteBg, 0, 0, winW, winH)
+	gdipFillRect(graphics, s.whiteBrush, 0, 0, winW, winH)
 
 	if s.gdipImage != 0 {
 		logoX := (winW - logoSize) / 2
@@ -367,7 +425,7 @@ func (s *winSplash) paint(hdc uintptr) {
 	}
 
 	titleY := float32(30 + logoSize + 8)
-	s.drawCenteredText(graphics, s.cfg.AppName, s.titleFont, colorTitle, titleY, 26)
+	s.drawCenteredText(graphics, s.cfg.AppName, s.titleFont, s.titleBrush, titleY, 26)
 
 	s.drawSpinner(graphics)
 
@@ -378,25 +436,24 @@ func (s *winSplash) paint(hdc uintptr) {
 
 	if pct > 0 {
 		barX, barY, barW, barH := 50, 204, winW-100, 4
-		gdipFillRect(graphics, colorLightGray, barX, barY, barW, barH)
+		gdipFillRect(graphics, s.lightGrayBrush, barX, barY, barW, barH)
 		fillW := int(float64(barW) * pct / 100.0)
 		if fillW > 0 {
-			gdipFillRect(graphics, s.accentARGB, barX, barY, fillW, barH)
+			gdipFillRect(graphics, s.accentBrush, barX, barY, fillW, barH)
 		}
 	}
 
 	if status != "" {
-		s.drawCenteredText(graphics, status, s.statusFont, colorStatus, 234, 20)
+		s.drawCenteredText(graphics, status, s.statusFont, s.statusBrush, 234, 20)
 	}
+
+	pGdipDeleteGraphics.Call(graphics)
+	pBitBlt.Call(hdc, 0, 0, winW, winH, s.memDC, 0, 0, srcCopy)
 }
 
-func (s *winSplash) drawCenteredText(graphics uintptr, text string, font uintptr, color uint32, y, height float32) {
+func (s *winSplash) drawCenteredText(graphics uintptr, text string, font, brush uintptr, y, height float32) {
 	textPtr := windows.StringToUTF16Ptr(text)
 	textLen := utf8.RuneCountInString(text)
-
-	var brush uintptr
-	pGdipCreateSolidFill.Call(uintptr(color), uintptr(unsafe.Pointer(&brush)))
-	defer pGdipDeleteBrush.Call(brush)
 
 	rect := rectF{X: 0, Y: y, Width: winW, Height: height}
 	pGdipDrawString.Call(graphics,
@@ -409,31 +466,23 @@ func (s *winSplash) drawSpinner(graphics uintptr) {
 	cy := float32(30+logoSize+8+26+20) + float32(spinnerSize)/2
 	r := float32(spinnerSize-3) / 2
 
-	s.mu.Lock()
-	angle := s.spinnerAngle
-	s.mu.Unlock()
+	// Wall-clock driven angle: missed/coalesced WM_TIMER ticks don't cause stutter.
+	elapsed := time.Since(s.startTime).Seconds()
+	angle := float32(math.Mod(elapsed*360.0*1000.0/spinnerPeriodMs, 360.0))
 
-	var trackPen uintptr
-	pGdipCreatePen1.Call(colorLightGray, f32bits(2.5), unitPixel, uintptr(unsafe.Pointer(&trackPen)))
-	pGdipDrawArc.Call(graphics, trackPen,
+	pGdipDrawArc.Call(graphics, s.trackPen,
 		f32bits(cx-r), f32bits(cy-r), f32bits(2*r), f32bits(2*r),
 		f32bits(0), f32bits(360))
-	pGdipDeletePen.Call(trackPen)
-
-	var arcPen uintptr
-	pGdipCreatePen1.Call(uintptr(s.accentARGB), f32bits(2.5), unitPixel, uintptr(unsafe.Pointer(&arcPen)))
-	pGdipSetPenLineCap197819.Call(arcPen, lineCapRound, lineCapRound, 0)
 
 	pGdipTranslateWorldTransform.Call(graphics, f32bits(cx), f32bits(cy), matrixOrderPrepend)
 	pGdipRotateWorldTransform.Call(graphics, f32bits(angle), matrixOrderPrepend)
 	pGdipTranslateWorldTransform.Call(graphics, f32bits(-cx), f32bits(-cy), matrixOrderPrepend)
 
-	pGdipDrawArc.Call(graphics, arcPen,
+	pGdipDrawArc.Call(graphics, s.arcPen,
 		f32bits(cx-r), f32bits(cy-r), f32bits(2*r), f32bits(2*r),
 		f32bits(0), f32bits(270))
 
 	pGdipResetWorldTransform.Call(graphics)
-	pGdipDeletePen.Call(arcPen)
 }
 
 func (s *winSplash) run() {
@@ -458,12 +507,6 @@ func (s *winSplash) run() {
 			return 1
 		case wmTimer:
 			if wParam == spinnerTimerID {
-				s.mu.Lock()
-				s.spinnerAngle -= 12
-				if s.spinnerAngle <= -360 {
-					s.spinnerAngle += 360
-				}
-				s.mu.Unlock()
 				pInvalidateRect.Call(hwnd, 0, 0)
 			}
 			return 0
@@ -505,7 +548,8 @@ func (s *winSplash) run() {
 	pShowWindow.Call(hwnd, swShow)
 	pSetForegroundWindow.Call(hwnd)
 
-	pSetTimer.Call(hwnd, spinnerTimerID, 33, 0)
+	s.startTime = time.Now()
+	pSetTimer.Call(hwnd, spinnerTimerID, 16, 0)
 
 	go s.dispatchCommands(hwnd)
 	s.messageLoop(hwnd)

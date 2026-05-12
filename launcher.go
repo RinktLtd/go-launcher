@@ -162,6 +162,8 @@ func (l *Launcher) Run(ctx context.Context) int {
 	cleanStagingDir(l.cfg.DataDir)
 	recoverInterruptedSwap(l.cfg.DataDir)
 
+	l.expireStaleCrashStateAtStartup()
+
 	// Ensure version directories exist
 	if err := ensureVersionDirs(l.cfg.DataDir); err != nil {
 		slog.Error("failed to create version directories", "error", err)
@@ -393,12 +395,7 @@ func (l *Launcher) waitForChild(ctx context.Context, cp *childProcess) int {
 
 func (l *Launcher) recordCrash() {
 	now := time.Now()
-
-	// Reset crash count if the window has expired
-	if !l.state.CrashWindowStart.IsZero() && now.Sub(l.state.CrashWindowStart) > l.cfg.CrashWindow {
-		l.state.CrashCount = 0
-		l.state.CrashWindowStart = time.Time{}
-	}
+	l.expireStaleCrashWindow(now)
 
 	l.state.CrashCount++
 	if l.state.CrashWindowStart.IsZero() {
@@ -407,6 +404,32 @@ func (l *Launcher) recordCrash() {
 	if err := saveState(l.cfg.DataDir, l.state); err != nil {
 		slog.Error("failed to save state after crash", "error", err)
 	}
+}
+
+// expireStaleCrashStateAtStartup clears a saturated crash_count carried over
+// from a prior session — needed because handleCrashThreshold runs before any
+// new crash, so recordCrash's window-expiry never gets a chance.
+func (l *Launcher) expireStaleCrashStateAtStartup() {
+	if !l.expireStaleCrashWindow(time.Now()) {
+		return
+	}
+	if err := saveState(l.cfg.DataDir, l.state); err != nil {
+		slog.Warn("failed to persist crash window reset", "error", err)
+	}
+}
+
+// expireStaleCrashWindow resets crash tracking if more than CrashWindow has
+// elapsed since the first recorded crash. Returns true if state was changed.
+func (l *Launcher) expireStaleCrashWindow(now time.Time) bool {
+	if l.state.CrashWindowStart.IsZero() {
+		return false
+	}
+	if now.Sub(l.state.CrashWindowStart) <= l.cfg.CrashWindow {
+		return false
+	}
+	l.state.CrashCount = 0
+	l.state.CrashWindowStart = time.Time{}
+	return true
 }
 
 func (l *Launcher) sleepBackoff(ctx context.Context, index int) int {
