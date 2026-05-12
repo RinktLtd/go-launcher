@@ -4,3 +4,7 @@ private-docs/
 # Go build artifacts
 *.test
 *.out
+
+# Built demo binaries
+/splash-demo
+/splash-demo.exe
