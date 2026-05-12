@@ -113,11 +113,9 @@ func TestCrashLoopExits(t *testing.T) {
 }
 
 func TestStaleCrashStateExpiresAtStartup(t *testing.T) {
-	// Regression: a saturated crash_count from a previous session (e.g. a
-	// test machine where users repeatedly close the runner manually) used to
-	// permanently brick the launcher — handleCrashThreshold fired before any
-	// new crash, so recordCrash's window-expiry never ran. Loading state with
-	// CrashWindowStart older than CrashWindow must reset the counter.
+	// Regression: a saturated crash_count from a previous session (test
+	// machine where users repeatedly close the runner) used to permanently
+	// brick the launcher. Loading state past CrashWindow must reset the counter.
 	cfg, dataDir := setupTestLauncher(t)
 
 	saveState(dataDir, &State{

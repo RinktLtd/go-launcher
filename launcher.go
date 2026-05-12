@@ -406,10 +406,9 @@ func (l *Launcher) recordCrash() {
 	}
 }
 
-// expireStaleCrashStateAtStartup persists a reset if a saturated crash_count
-// from a prior session has aged out of the crash window. Without this,
-// handleCrashThreshold would fire before any new crash, so recordCrash's
-// window-expiry would never get a chance to clear stale state.
+// expireStaleCrashStateAtStartup clears a saturated crash_count carried over
+// from a prior session — needed because handleCrashThreshold runs before any
+// new crash, so recordCrash's window-expiry never gets a chance.
 func (l *Launcher) expireStaleCrashStateAtStartup() {
 	if !l.expireStaleCrashWindow(time.Now()) {
 		return
