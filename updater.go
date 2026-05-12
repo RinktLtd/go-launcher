@@ -30,14 +30,11 @@ func bootstrapDownload(ctx context.Context, cfg *Config) error {
 		return err
 	}
 
-	// No previous version during bootstrap — just move staging to current.
-	// current/ may exist as an empty leftover from a previously interrupted install
-	// (hasCurrentVersion returns false when the dir exists but has no entries),
-	// in which case os.Rename would fail with "file exists".
+	// current/ may exist empty after an interrupted install — Rename won't overwrite it.
 	cur := currentVersionDir(cfg.DataDir)
 	stg := stagingVersionDir(cfg.DataDir)
 
-	if err := os.MkdirAll(filepath.Dir(cur), 0700); err != nil {
+	if err := ensureVersionDirs(cfg.DataDir); err != nil {
 		return fmt.Errorf("create versions dir: %w", err)
 	}
 
