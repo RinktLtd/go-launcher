@@ -112,6 +112,41 @@ func TestCrashLoopExits(t *testing.T) {
 	}
 }
 
+func TestStaleCrashStateExpiresAtStartup(t *testing.T) {
+	// Regression: a saturated crash_count from a previous session (e.g. a
+	// test machine where users repeatedly close the runner manually) used to
+	// permanently brick the launcher — handleCrashThreshold fired before any
+	// new crash, so recordCrash's window-expiry never ran. Loading state with
+	// CrashWindowStart older than CrashWindow must reset the counter.
+	cfg, dataDir := setupTestLauncher(t)
+
+	saveState(dataDir, &State{
+		CurrentVersion:   "1.0.0",
+		CrashCount:       cfg.CrashThreshold,
+		CrashWindowStart: time.Now().Add(-2 * cfg.CrashWindow),
+	})
+
+	t.Setenv("CHILD_HEARTBEAT", "1")
+	t.Setenv("CHILD_SHUTDOWN", "1")
+	t.Setenv("CHILD_EXIT_CODE", "0")
+
+	l := New(cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if code := l.Run(ctx); code != 0 {
+		t.Errorf("expected exit 0 after stale-crash recovery, got %d", code)
+	}
+
+	state, _ := loadState(dataDir)
+	if state.CrashCount != 0 {
+		t.Errorf("expected crash count cleared, got %d", state.CrashCount)
+	}
+	if !state.CrashWindowStart.IsZero() {
+		t.Errorf("expected crash window zeroed, got %v", state.CrashWindowStart)
+	}
+}
+
 func TestRestartOnUnexpectedExit0(t *testing.T) {
 	cfg, dataDir := setupTestLauncher(t)
 
