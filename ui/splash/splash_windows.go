@@ -111,6 +111,7 @@ const (
 	wsExToolWin = 0x00000080
 
 	csDropShadow = 0x00020000
+	swHide       = 0
 	swShow       = 5
 	smCxscreen   = 0
 	smCyscreen   = 1
@@ -589,10 +590,12 @@ func (s *winSplash) messageLoop(hwnd uintptr) {
 			pInvalidateRect.Call(hwnd, 0, 0)
 		case wmAppHide:
 			pKillTimer.Call(hwnd, spinnerTimerID)
+			pShowWindow.Call(hwnd, swHide)
 			pDestroyWindow.Call(hwnd)
 			return
 		case wmAppError:
 			pKillTimer.Call(hwnd, spinnerTimerID)
+			pShowWindow.Call(hwnd, swHide)
 			pDestroyWindow.Call(hwnd)
 			s.mu.Lock()
 			errText := s.statusText
