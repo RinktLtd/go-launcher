@@ -635,6 +635,54 @@ func main() {
 	}
 }
 
+func TestBootstrapDownloadWithEmptyCurrentDir(t *testing.T) {
+	// Regression: an empty versions/current/ directory left over from a previously
+	// interrupted install caused bootstrap to fail with "move staging to current: ...
+	// file exists" because os.Rename refuses to overwrite an existing target.
+	binDir, binName := buildChildFromSource(t, `package main
+
+import "os"
+
+func main() {
+	stateDir := os.Getenv("TEST_LAUNCHER_STATE_DIR")
+	if stateDir == "" { os.Exit(1) }
+
+	f, _ := os.Create(stateDir + "/heartbeat")
+	f.Close()
+	os.WriteFile(stateDir + "/shutdown_requested", []byte(""), 0600)
+}
+`)
+
+	dataDir := t.TempDir()
+
+	// Pre-create an empty versions/current/ to simulate the broken state.
+	cur := filepath.Join(dataDir, "versions", "current")
+	if err := os.MkdirAll(cur, 0700); err != nil {
+		t.Fatalf("setup: create empty current dir: %v", err)
+	}
+
+	fetcher := &fakeFetcher{
+		binaryPath: filepath.Join(binDir, binName),
+		release:    Release{Version: "1.0.0", URL: "https://example.com/v1"},
+	}
+
+	cfg := baseTestConfig(binName, dataDir)
+	cfg.Fetcher = fetcher
+	l := New(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	code := l.Run(ctx)
+	if code != 0 {
+		t.Fatalf("expected exit 0 after bootstrap over empty current/, got %d", code)
+	}
+
+	if !hasCurrentVersion(dataDir) {
+		t.Error("expected current/ to have child after bootstrap")
+	}
+}
+
 func TestUICallbacks(t *testing.T) {
 	// Child touches heartbeat, waits for the launcher to detect it, then shuts down.
 	binDir, binName := buildChildFromSource(t, `package main
