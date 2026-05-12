@@ -593,8 +593,9 @@ func main() {
 }
 
 func TestBootstrapDownload(t *testing.T) {
-	// Start with empty versions/ — the launcher should bootstrap via Fetcher,
-	// then spawn the downloaded child.
+	// "empty current dir leftover" regression: a previously interrupted install
+	// can leave versions/current/ as an empty directory, and os.Rename refuses
+	// to overwrite it ("move staging to current: ... file exists").
 	binDir, binName := buildChildFromSource(t, `package main
 
 import "os"
@@ -609,29 +610,42 @@ func main() {
 }
 `)
 
-	dataDir := t.TempDir()
-	// Intentionally NOT installing any child — versions/current/ is empty
+	for _, tc := range []struct {
+		name              string
+		preCreateEmptyCur bool
+	}{
+		{"clean versions dir", false},
+		{"empty current dir leftover", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dataDir := t.TempDir()
 
-	fetcher := &fakeFetcher{
-		binaryPath: filepath.Join(binDir, binName),
-		release:    Release{Version: "1.0.0", URL: "https://example.com/v1"},
-	}
+			if tc.preCreateEmptyCur {
+				if err := os.MkdirAll(currentVersionDir(dataDir), 0700); err != nil {
+					t.Fatalf("setup: create empty current dir: %v", err)
+				}
+			}
 
-	cfg := baseTestConfig(binName, dataDir)
-	cfg.Fetcher = fetcher
-	l := New(cfg)
+			fetcher := &fakeFetcher{
+				binaryPath: filepath.Join(binDir, binName),
+				release:    Release{Version: "1.0.0", URL: "https://example.com/v1"},
+			}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+			cfg := baseTestConfig(binName, dataDir)
+			cfg.Fetcher = fetcher
+			l := New(cfg)
 
-	code := l.Run(ctx)
-	if code != 0 {
-		t.Fatalf("expected exit 0 after bootstrap, got %d", code)
-	}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
 
-	// Child binary should now exist in current/
-	if !hasCurrentVersion(dataDir) {
-		t.Error("expected current/ to have child after bootstrap")
+			if code := l.Run(ctx); code != 0 {
+				t.Fatalf("expected exit 0 after bootstrap, got %d", code)
+			}
+
+			if !hasCurrentVersion(dataDir) {
+				t.Error("expected current/ to have child after bootstrap")
+			}
+		})
 	}
 }
 
